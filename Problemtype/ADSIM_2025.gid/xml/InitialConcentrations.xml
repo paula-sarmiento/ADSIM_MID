@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
+
+<condition  n="Initial_Concentrations" pn="Initial gas concentrations" icon="icon_init_concentrations.png" ov="surface" ovm="element" help= "Use this conditions to establish the initial concentrations of all gases defined" actualize_tree="1">
+  <!-- Concentration fields are dynamically shown based on the number of gases defined in Materials -->
+  <value n="concentration_gas_1_" pn="Concentration gas 1 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 1]" help="Initial concentration for gas 1"/>
+  <value n="concentration_gas_2_" pn="Concentration gas 2 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 2]" help="Initial concentration for gas 2"/>
+  <value n="concentration_gas_3_" pn="Concentration gas 3 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 3]" help="Initial concentration for gas 3"/>
+  <value n="concentration_gas_4_" pn="Concentration gas 4 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 4]" help="Initial concentration for gas 4"/>
+  <value n="concentration_gas_5_" pn="Concentration gas 5 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 5]" help="Initial concentration for gas 5"/>
+  <value n="concentration_gas_6_" pn="Concentration gas 6 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 6]" help="Initial concentration for gas 6"/>
+  <value n="concentration_gas_7_" pn="Concentration gas 7 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 7]" help="Initial concentration for gas 7"/>
+  <value n="concentration_gas_8_" pn="Concentration gas 8 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 8]" help="Initial concentration for gas 8"/>
+  <value n="concentration_gas_9_" pn="Concentration gas 9 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 9]" help="Initial concentration for gas 9"/>
+  <value n="concentration_gas_10_" pn="Concentration gas 10 [mol/L^3]" v="0.0" state="[ADSIM_2025::CheckGasExists 10]" help="Initial concentration for gas 10"/>
+</condition>

@@ -1,0 +1,22 @@
+<?xml version="0.0" encoding="utf-8"?>
+<!-- Luis Zambrano-Cruzatty, Paula Sarmiento, Andres Espinosa -->
+<!-- -*- coding: utf-8;-*- -->
+<Infoproblemtype version="0.0">
+  <Program>
+    <Name>ADSIM_2025</Name>
+    <Version>0.x.x</Version>   
+    <MinimumGiDVersion>14.1.8d</MinimumGiDVersion>
+    <EnableDeprecated>0</EnableDeprecated>
+    <CustomLibAutomatic>1</CustomLibAutomatic>
+    <CustomLibNativeGroups>1</CustomLibNativeGroups>
+    <ImageFileBrowser>images/icon_ADSIM.png</ImageFileBrowser>
+    <ShortDescription>Generates input dictionaries for ADSIM</ShortDescription>
+    <Description>Creates input files for ADSIM including boundary conditions and assignation of materials .
+    </Description>
+    <NewsInVersion version="0.0" date="2025-11-13">
+      *  Format copied and adapted from CompassLib to CustomLib and use GiD groups
+    </NewsInVersion>
+    <ValidatePassword></ValidatePassword>
+    <MsgcatRoot>resources/msgs</MsgcatRoot>
+  </Program>
+</Infoproblemtype>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
+
+<!-- GAS FLOW -->
+<condition n="Gas_Flow" pn="Gas flow" icon="icon_flow_bc" ov="point,line,surface" help="Use this condition to apply gas flow normal to the surface">
+  <!-- Flow fields are dynamically shown based on the number of gases defined in Materials -->
+  <value n="flow_gas_1" pn="flow gas 1 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 1]"/>
+  <value n="flow_gas_2" pn="flow gas 2 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 2]"/>
+  <value n="flow_gas_3" pn="flow gas 3 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 3]"/>
+  <value n="flow_gas_4" pn="flow gas 4 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 4]"/>
+  <value n="flow_gas_5" pn="flow gas 5 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 5]"/>
+  <value n="flow_gas_6" pn="flow gas 6 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 6]"/>
+  <value n="flow_gas_7" pn="flow gas 7 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 7]"/>
+  <value n="flow_gas_8" pn="flow gas 8 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 8]"/>
+  <value n="flow_gas_9" pn="flow gas 9 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 9]"/>
+  <value n="flow_gas_10" pn="flow gas 10 [mol/L^2*s]" v="0.0" state="[ADSIM_2025::CheckGasExists 10]"/>
+</condition>

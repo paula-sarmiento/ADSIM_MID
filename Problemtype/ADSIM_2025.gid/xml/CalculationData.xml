@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
+
+<container n="Calculation_Data" pn="Calculation Data" icon="icon_calculation.png" help="Define calculation parameters for the simulation.">
+
+	<value n="solver_type" pn="Select solver type" icon="" values="2D-Plane,2D-Axisymmetric" v="2D-Plane" editable="0"/>
+
+	<container n="calculation_stepping_data" pn="Time stepping data" icon="icon_time.png" >
+		<value n="simulation_time" pn="Total time of simulation [T]" v="0.0" state="normal"/>
+		<value n="time_step" pn="time per calculation step [T]" v="0.0" state="normal"/> 
+		<value n="courant_number" pn="Courant number" v="0.98" state="normal"/>   
+	</container>
+	<!-- Data saving parameter -->
+
+	<container n="data_saving" pn="Simulation probing" icon="icon_timeseries.png" >
+		<value n="data_saving_interval" pn="Choose the time interval between data saved [T]" v="1.0" state="normal"/>
+
+		<!-- Choose nodes to follow -->
+		<container n="nodes_to_follow" pn="Get data on nodes" icon="icon_nodes.png" help="Select nodes to follow during the simulation">
+		
+			<value n="number_nodes" pn="Number of nodes to probe" v="0" help="Specify the number of nodes to probe" editable="1"/>
+			<value n="node_1" pn="Node 1" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 1]" /> 		
+			<value n="node_2" pn="Node 2" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 2]" />
+			<value n="node_3" pn="Node 3" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 3]" />
+			<value n="node_4" pn="Node 4" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 4]" />
+			<value n="node_5" pn="Node 5" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 5]" />
+			<value n="node_6" pn="Node 6" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 6]" />
+			<value n="node_7" pn="Node 7" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 7]" />
+			<value n="node_8" pn="Node 8" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 8]" />
+			<value n="node_9" pn="Node 9" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 9]" />
+			<value n="node_10" pn="Node 10" v="0" help="Node ID to follow" state="[ADSIM_2025::CheckNumberofNodes 10]" />
+		</container>
+		<!-- Choose elements to follow -->
+		<container n="elements_to_follow" pn="Get data on elements" icon="icon_elements.png" help="Select elements to follow during the simulation. Data will be calculated at Gaussian point of elements.">
+			<value n="number_elements" pn="Number of elements to probe" v="0" help="Specify the number of elements to probe" editable="1"/>
+
+			<value n="element_1" pn="Element 1" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 1]" /> 		
+			<value n="element_2" pn="Element 2" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 2]" />
+			<value n="element_3" pn="Element 3" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 3]" />
+			<value n="element_4" pn="Element 4" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 4]" />
+			<value n="element_5" pn="Element 5" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 5]" />
+			<value n="element_6" pn="Element 6" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 6]" />
+			<value n="element_7" pn="Element 7" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 7]" />
+			<value n="element_8" pn="Element 8" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 8]" />
+			<value n="element_9" pn="Element 9" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 9]" />
+			<value n="element_10" pn="Element 10" v="0" help="Element ID to follow" state="[ADSIM_2025::CheckNumberofElements 10]" />
+		</container>
+	</container>
+	
+</container>

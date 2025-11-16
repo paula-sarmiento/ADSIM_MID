@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
+
+
+
+<container n="materials" pn="Materials" icon="icon_materials.png" help="Define materials properties for gases and soils.">
+
+<!-- ______________________________________________________________________ -->
+<!-- Gas properties -->
+<!-- ______________________________________________________________________ -->
+
+<container n="m_gas" pn="Gas properties" icon="icon_gas.png">
+  <blockdata n="gas" name="Gas 1" sequence='1' editable_name='unique' morebutton="0" icon="icon_gas.png">
+      <value n="Dynamic_viscosity_" pn="Dynamic viscosity [L^2/T]" v="0.0"/>
+      
+      <value n="molar_mass_" pn="Molar mass [M/mol]" v="0.0"/>
+
+      <value n="diffusion_coefficient_1" pn="Diffusion coefficient [L^2/T]" v="0.0"/>
+  </blockdata>
+</container>
+
+<!-- ______________________________________________________________________ -->
+<!-- Liquid properties -->
+<!-- ______________________________________________________________________ -->
+<container n="m_liquid" pn="Liquid properties" icon="icon_drop.png" help="Define properties of the liquid phase for all materials.">   
+      
+      <value n="Dynamic_viscosity_" pn="Dynamic viscosity [L^2/T]" v="0.0"/>  
+      <value n="density_" pn="Density [M/L^3]" v="0.0"/>
+      <value n="specific_heat_water_" pn="Specific heat [FL/(M·Tm)]" v="0.0"/>
+
+</container>
+
+
+<!-- ______________________________________________________________________ -->
+<!-- Solid properties -->
+<!-- ______________________________________________________________________ -->
+<container n="m_soil" pn="Soil properties" icon="icon_soils.png" help="Define soil material properties.">
+
+  <blockdata n="soil_material" name="Soil 1" sequence='1' editable_name='unique' morebutton="0" icon="icon_soils.png">
+    <condition n="soil_basic" pn="Physical and thermal properties" icon="" ov="surface" ovm="element">
+      <container n="soil_physical" pn="Physical properties" icon=""
+        help="Define the physical properties of the soil material."
+      > 
+      <value n="specific_gravity" pn="Specific gravity [-]" v="0.0"/>
+      <value n="initial_porosity_" pn="Porosity [-]" v="0.0"/>
+      <value n="saturation_" pn="Saturation [-]" v="0.0"/>
+      <value n="granular_tortuosity_" pn="Granular tortuosity [-]" v="0.0"/>
+      <value n="intrinsic_permeabiliy_" pn="Intrinsic permeability [L^2]" v="0.0"/>
+      <value n="lime_content_" pn="Lime content [-]" v="0.0" help="Defined as a fraction of the weight of solids."/>
+      <value n="lime_impure_" pn="Residual lime content [-]" v="0.0" help="Defined as a fraction of the lime content."/>
+      <value n="reaction_rate_" pn="Reaction rate [mol/L^3.s]" v="0.0" help="Defined as a fraction of the lime content."/>
+
+      </container>          
+
+
+      <container n="soil_thermal" pn="Thermal properties" icon="" help="Define the thermal properties of the soil material.">
+      <value n="specific_heat_solid_" pn="Specific heat solid [FL/(M·Tm)]" v="0.0"/> 
+      </container>
+    </condition>
+  </blockdata>
+
+</container>
+
+</container>
