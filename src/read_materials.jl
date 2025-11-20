@@ -149,7 +149,7 @@ function read_materials_file(filename::String)
     parse_liquid_properties!(materials, data["liquid"])
     
     # Parse soil dictionary
-    materials.soil_dictionary = data["soil_dictionary"]
+    materials.soil_dictionary = data["soil_dictionary_"]
     
     # Parse soil properties
     parse_soil_properties!(materials, data["soil"])
