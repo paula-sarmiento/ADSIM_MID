@@ -36,7 +36,7 @@ project_name = ARGS[1]
 
 # Construct file paths from project name
 # Assuming data files are in the data/ directory relative to src/
-data_dir = "src//data"
+data_dir = "src\\data"
 #data_dir = "data"
 mesh_file = joinpath(data_dir, "$(project_name).mesh")
 calc_file = joinpath(data_dir, "$(project_name)_calc.toml")
