@@ -22,6 +22,7 @@ global C_g::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global P::Vector{Float64} = Float64[]
 global T::Vector{Float64} = Float64[]
 global v::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
+global P_boundary::Matrix{Int} = Matrix{Int}(undef, 0, 0)
 
 # Reactive species
 global C_lime::Vector{Float64} = Float64[]
@@ -48,7 +49,7 @@ The exclamation mark indicates it modifies global variables.
 """
 function zero_variables!(mesh, materials)
     global NDim, Nnodes, Nelements, NSoils, NGases
-    global C_g, P, T, v
+    global C_g, P, T, v, P_boundary
     global C_lime, C_caco3
     global dC_g_dt, dT_dt, dC_lime_dt
     
@@ -64,6 +65,7 @@ function zero_variables!(mesh, materials)
     P = zeros(Float64, Nnodes)
     T = zeros(Float64, Nnodes)
     v = zeros(Float64, Nnodes, NDim)
+    P_boundary = ones(Int, Nnodes, NGases)  # 1 = free node, 0 = concentration BC node
     
     # Allocate and initialize reactive species
     C_lime = zeros(Float64, Nnodes)
@@ -159,12 +161,13 @@ boundary conditions are specified.
 - These values should be maintained throughout the simulation for BC nodes
 """
 function apply_concentration_bc!(mesh)
-    global C_g, NGases
+    global C_g, NGases, P_boundary
     
     # Apply nodal concentration boundary conditions
     for (node_id, concentrations) in mesh.concentration_bc
         @threads for gas_idx in 1:NGases
-            C_g[node_id, gas_idx] = concentrations[gas_idx]            
+            C_g[node_id, gas_idx] = concentrations[gas_idx]
+            P_boundary[node_id, gas_idx] = 0  # Mark node as having concentration BC
         end
     end
 end
@@ -175,21 +178,28 @@ end
 
 Apply absolute pressure boundary conditions from mesh data to the global P array.
 This function sets fixed pressures at nodes where pressure boundary conditions 
-are specified.
+are specified and marks the vacating gas as having restricted flow.
 
 # Arguments
 - `mesh::MeshData`: Mesh data structure containing pressure BC data
 
 # Note
-- Modifies global variable `P`
+- Modifies global variables `P` and `P_boundary`
+- Sets P_boundary to 0 for the vacating gas at pressure BC nodes
 - These values should be maintained throughout the simulation for BC nodes
 """
 function apply_pressure_bc!(mesh)
-    global P
+    global P, P_boundary
     
     # Apply nodal pressure boundary conditions
     for (node_id, pressure) in mesh.absolute_pressure_bc
         P[node_id] = pressure
+        
+        # Get the vacating gas index for this node and mark it as restricted
+        if haskey(mesh.vacating_gas_bc, node_id)
+            gas_idx = mesh.vacating_gas_bc[node_id]
+            P_boundary[node_id, gas_idx] = 0  # Gas can vacate the system
+        end
     end
 end
 

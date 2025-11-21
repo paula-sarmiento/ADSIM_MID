@@ -237,8 +237,9 @@ proc ADSIM::WriteMeshPressureBC { root } {
 
     foreach gNode [$root selectNodes $xp] {
         set v1 [$gNode selectNodes {string(value[@n="absolute_pressure"]/@v)}]
-        #write nodes with values
-        dict set formats [$gNode @n] "%d $v1\n"
+        set gas_idx [$gNode selectNodes {string(value[@n="vacating_gas_index"]/@v)}]
+        #write nodes with pressure and gas index
+        dict set formats [$gNode @n] "%d $v1 $gas_idx\n"
     }
 
     #point conditions
@@ -246,8 +247,9 @@ proc ADSIM::WriteMeshPressureBC { root } {
     set xp [format_xpath {container[@n="BC"]/condition[@n="gas_absolute_boundary"]/group[@ov=%s]} $ov_type]
     foreach gNode [$root selectNodes $xp] {
         set v1 [$gNode selectNodes {string(value[@n="absolute_pressure"]/@v)}]
-        #write nodes with values
-        dict set formats [$gNode @n] "%d $v1\n"
+        set gas_idx [$gNode selectNodes {string(value[@n="vacating_gas_index"]/@v)}]
+        #write nodes with pressure and gas index
+        dict set formats [$gNode @n] "%d $v1 $gas_idx\n"
     }
 
     # Add a counter 

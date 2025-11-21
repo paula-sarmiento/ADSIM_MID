@@ -499,6 +499,37 @@ proc ADSIM_2025::CheckGasExists { gas_index } {
     }
 }
 
+######################################################################
+# Get list of gas indices for dropdown menu
+# Returns comma-separated list like "1,2,3" based on number of gases defined
+proc ADSIM_2025::GetGasIndices {} {
+    set root [customlib::GetBaseRoot]
+    if {$root == ""} {
+        # Default to single gas if root not available
+        return "1"
+    }
+    
+    set xp {//container[@n="materials"]/container[@n="m_gas"]/blockdata}
+    set gas_blocks [$root selectNodes $xp]
+    set num_gases [llength $gas_blocks]
+    
+    if {$num_gases == 0} {
+        return "1"
+    }
+    
+    # Build comma-separated list of indices
+    set indices ""
+    for {set i 1} {$i <= $num_gases} {incr i} {
+        if {$indices eq ""} {
+            set indices "$i"
+        } else {
+            set indices "$indices,$i"
+        }
+    }
+    
+    return $indices
+}
+
 proc ADSIM_2025::selectNode {domNode} {
     # Invoke GiD's node selection
     set nodeId [GiD_Info incolor pick nodes]

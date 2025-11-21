@@ -17,6 +17,7 @@ Structure to store all mesh data and associated boundary/initial conditions.
 - `concentration_bc::Dict{Int, Vector{Float64}}`: Concentration BC (node_id => [gas1, gas2, ...])
 - `uniform_flow_bc::Dict{Int, Vector{Float64}}`: Uniform flow BC (node_id => [gas1, gas2, ...])
 - `absolute_pressure_bc::Dict{Int, Float64}`: Absolute pressure BC (node_id => pressure)
+- `vacating_gas_bc::Dict{Int, Int}`: Vacating gas index for pressure BC (node_id => gas_index)
 - `initial_concentrations::Dict{Int, Vector{Float64}}`: Initial concentrations (elem_id => [gas1, gas2, ...])
 - `initial_temperature::Dict{Int, Float64}`: Initial temperature (elem_id => temperature)
 - `materials::Dict{Int, Int}`: Material assignment (elem_id => material_index)
@@ -30,6 +31,7 @@ mutable struct MeshData
     concentration_bc::Dict{Int, Vector{Float64}}
     uniform_flow_bc::Dict{Int, Vector{Float64}}
     absolute_pressure_bc::Dict{Int, Float64}
+    vacating_gas_bc::Dict{Int, Int}
     initial_concentrations::Dict{Int, Vector{Float64}}
     initial_temperature::Dict{Int, Float64}
     materials::Dict{Int, Int}
@@ -41,6 +43,7 @@ mutable struct MeshData
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
+            Dict{Int, Int}(),
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
             Dict{Int, Int}())
@@ -310,7 +313,9 @@ function parse_absolute_pressure!(mesh::MeshData, lines::Vector{String}, line_id
         parts = split(line)
         node_id = parse(Int, parts[1])
         pressure = parse(Float64, parts[2])
+        gas_index = parse(Int, parts[3])
         mesh.absolute_pressure_bc[node_id] = pressure
+        mesh.vacating_gas_bc[node_id] = gas_index
         line_idx += 1
     end
     
