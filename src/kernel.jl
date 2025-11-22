@@ -12,6 +12,7 @@
 
 # Load required packages
 using Dates
+using Printf
 
 # Include data reading modules
 include("read_mesh.jl")
@@ -19,6 +20,7 @@ include("read_materials.jl")
 include("read_calc_params.jl")
 include("initialize_variables.jl")
 include("initialize_flows.jl")
+include("time_step.jl")
 
 
 #______________________________________________________
@@ -122,10 +124,18 @@ function main()
         initialize_all_flows!(mesh, materials, Nnodes, NGases)
         log_print("   ✓ System ready for simulation")
 
-        # Step 6: Additional processing steps (to be implemented)
-        # - Material properties
+        # Step 6: Calculate time step information
+        log_print("\n[6/N] Calculating time step information")
+        time_data = calculate_time_step_info(mesh, materials, calc_params)
+        log_print(@sprintf("   ✓ Minimum characteristic length: %.3g %s", time_data.h_min, calc_params["units"]["geometry_unit"]))
+        log_print(@sprintf("   ✓ Critical time step: %.4g %s", time_data.critical_dt, calc_params["units"]["time_unit"]))
+        log_print("   ✓ Courant number: $(time_data.courant_number)")
+        log_print(@sprintf("   ✓ Actual time step: %.4g %s", time_data.actual_dt, calc_params["units"]["time_unit"]))
+        log_print("   ✓ Number of time steps: $(time_data.num_steps)")
+
+        # Step 7: Additional processing steps (to be implemented)
         # - Assembly of system matrices
-        # - Time stepping
+        # - Time stepping loop
         # - Solution
         # - Post-processing
 

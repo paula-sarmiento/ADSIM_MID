@@ -54,3 +54,23 @@ Currently all data are mapped to the nodes including:
 13. Rate of temperature (scalar)
 
 The output files should be correctly serialized so that Paraview can understand the 
+
+# Time step calculation
+
+The time step is calculated using the minor of three time scales defined below:
+$$    
+    \Delta t= C_N \  \text{min} \left\{ \cfrac{h_{min}^2 \tau}{\theta_g D_{max}}, h_{min}^2 \left(\cfrac{ \mu_{g}}{C_g^i K T R } \right)_{min} , \cfrac{1}{ \kappa \theta_w C_{CO_2,max} }  \right\}
+$$
+
+Where $0 < C_N \leq 1$ represents the Courant number and $h$ indicates the characteristic mesh size. Numbers in the numerator or denominator are maximized or minimized to ensure the safe calculation of the critical time step.
+
+$\kappa=$ Tortuosity factor <br>
+$\theta_g=n-\theta_w $ volumetric gas concentration <br>
+$D_{max}=$ maximum diffusion gas coefficient <br>
+$\mu_g=$ Minimum gas dynamic viscosity <br>
+$C_g^i=$ Maximum initial gas concentration <br>
+$C_{CO_2,max}=$ maximum concentration of $CO_2$
+
+The code loops all elements to get the minimum characteristic length and gets the maximum or minimum parameters needed to calculate the critical time step.
+
+Finally, the code multiplies this minimum by the Courant number $C_N$ given in the calculation parameters.
