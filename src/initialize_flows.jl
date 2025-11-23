@@ -52,10 +52,6 @@ function zero_flow_vectors!(Nnodes::Int, NGases::Int)
     
     # Initialize source/sink vector (only for CO2)
     q_source_sink = zeros(Float64, Nnodes)
-    
-    # Initialize lumped mass matrix
-    M_L = zeros(Float64, Nnodes)
-
 end
 
 
@@ -179,8 +175,7 @@ Call sequence:
 - Should be called once during initialization after mesh and materials are loaded
 """
 function initialize_all_flows!(mesh, materials, Nnodes::Int, NGases::Int)
-    zero_flow_vectors!(Nnodes, NGases)
-    # Lumped mass matrix is already zeroed in zero_flow_vectors!
+    zero_flow_vectors!(Nnodes, NGases)    
     apply_boundary_flows!(mesh)
 end
 

@@ -13,7 +13,10 @@ Structure to store time stepping information for the simulation.
 - `critical_dt::Float64`: Critical time step calculated from stability criteria [s]
 - `actual_dt::Float64`: Actual time step used (critical_dt × Courant number) [s]
 - `total_time::Float64`: Total simulation time requested by user [s]
+- `time_per_step::Float64`: Time per load step (when data is saved) [s]
 - `num_steps::Int`: Number of time steps required for the simulation
+- `num_steps_per_load::Int`: Number of time steps per load step
+- `num_load_steps::Int`: Number of load steps in the simulation
 - `courant_number::Float64`: Courant number (0 < C_N ≤ 1)
 - `h_min::Float64`: Minimum characteristic element size [m]
 """
@@ -21,12 +24,15 @@ mutable struct TimeStepData
     critical_dt::Float64
     actual_dt::Float64
     total_time::Float64
+    time_per_step::Float64
     num_steps::Int
+    num_steps_per_load::Int
+    num_load_steps::Int
     courant_number::Float64
     h_min::Float64
     
     function TimeStepData()
-        new(0.0, 0.0, 0.0, 0, 0.0, 0.0)
+        new(0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0.0, 0.0)
     end
 end
 
@@ -401,6 +407,15 @@ function calculate_critical_time_step(mesh, materials, T_ref::Float64)
         dt_reaction = 1.0 / reaction_param_max
     end
     
+    # Print limiting time scale based on which is smallest
+    if dt_diffusion <= dt_advection && dt_diffusion <= dt_reaction
+        println("   ✓ Limiting time scale: Diffusive")
+    elseif dt_advection <= dt_diffusion && dt_advection <= dt_reaction
+        println("   ✓ Limiting time scale: Advective")
+    else
+        println("   ✓ Limiting time scale: Reactive")
+    end
+    
     # Return minimum of all three time scales
     return min(dt_diffusion, dt_advection, dt_reaction)
 end
@@ -451,11 +466,20 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
     # Calculate actual time step (apply Courant number)
     time_data.actual_dt = time_data.critical_dt * time_data.courant_number
     
+    # Get time per load step (when data is saved)
+    time_data.time_per_step = calc_params["time_stepping"]["time_per_step"]
+    
+    # Calculate number of time steps per load step
+    time_data.num_steps_per_load = ceil(Int, time_data.time_per_step / time_data.actual_dt)
+    
     # Get total simulation time
     time_data.total_time = calc_params["time_stepping"]["total_simulation_time"]
     
-    # Calculate number of time steps required
-    time_data.num_steps = ceil(Int, time_data.total_time / time_data.actual_dt)
+    # Calculate number of load steps
+    time_data.num_load_steps = ceil(Int, time_data.total_time / time_data.time_per_step)
+    
+    # Calculate total number of time steps for entire simulation
+    time_data.num_steps = time_data.num_steps_per_load * time_data.num_load_steps
     
     # Store minimum characteristic length
     time_data.h_min = find_minimum_characteristic_length(mesh)
