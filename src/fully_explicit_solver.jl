@@ -316,7 +316,7 @@ where:
 - F = diffusion flow vector = -K × C_g
 - K = stiffness matrix from diffusion term
 """
-function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, log_print)
+function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print)
     log_print("\n[8/N] Starting fully explicit diffusion solver")
 
     # Universal gas constant [J/(mol·K)]
@@ -326,6 +326,13 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     Nnodes = mesh.num_nodes
     Nelements = mesh.num_elements
     NGases = length(materials.gas_dictionary)
+    
+    # Get solver settings to determine which fluxes to calculate
+    solver_settings = calc_params["solver_settings"]
+    calculate_diffusion = solver_settings["diffusion"] == 1
+    calculate_advection = solver_settings["advection"] == 1
+    calculate_gravity = solver_settings["gravity"] == 1
+    calculate_reaction = solver_settings["reaction_kinetics"] == 1
     
     # Time stepping parameters
     dt = time_data.actual_dt
@@ -352,8 +359,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     total_concentration = vec(sum(C_g, dims=2))
     
     # Write initial state (t = 0)
-     log_print("   ✓ Load step: 0")
-    write_output_vtk(mesh, materials, 0, 0.0, calc_params, total_concentration)
+    log_print("      Load step 0 (0.0%)")
+    write_output_vtk(mesh, materials, 0, 0.0, project_name, total_concentration)
     
     # Initialize time tracking
     current_time = 0.0
@@ -403,18 +410,24 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 #Get gas dynamic viscosity
                 μ_g = gas.dynamic_viscosity
 
-                #Update diffusion flow vector ∑_p θ_g^p * D_g^p * k_elm * det(J) * W_p / τ^p 
+                #______________________________________________________    
+                #Diffusion calculation start here
+                #______________________________________________________
+                if calculate_diffusion
+                    #Update diffusion flow vector ∑_p θ_g^p * D_g^p * k_elm * det(J) * W_p / τ^p 
 
-                #Get all gas nodal concentrations                
-                C_e = [C_g[nodes[i], gas_idx] for i in 1:4]
+                    #Get all gas nodal concentrations                
+                    C_e = [C_g[nodes[i], gas_idx] for i in 1:4]
 
-                q_aux= zeros(4) #local diffusion flow vector
-                q_aux = (θ_g * D_g / τ) * K_elements[e] *  C_e
+                    q_aux= zeros(4) #local diffusion flow vector
+                    q_aux = (θ_g * D_g / τ) * K_elements[e] *  C_e
 
-                for i in 1:4 #loop nodes in element       
-                    node_id = nodes[i] #global node id
-                    q_diffusion[node_id, gas_idx] +=  q_aux[i]
+                    for i in 1:4 #loop nodes in element       
+                        node_id = nodes[i] #global node id
+                        q_diffusion[node_id, gas_idx] +=  q_aux[i]
+                    end
                 end
+                #______________________________________________________    
 
                 #Get total nodal concentrations
                 C_t= [total_concentration[nodes[i]] for i in 1:4]
@@ -422,40 +435,46 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 #Get nodal temperatures
                 T_e = [T[nodes[i]] for i in 1:4]
 
-                #Zero nodal advection fluxes
-                q_aux= zeros(4) #local advection flow vector
+                #______________________________________________________    
+                #Advection calculation start here
+                #______________________________________________________
+                if calculate_advection
+                    #Zero nodal advection fluxes
+                    q_aux= zeros(4) #local advection flow vector
 
-                # loop Gauss points
-                for p in 1:4
-                    # Get shape function derivatives in isoparametric coords
-                    B = ShapeFunctions.get_B(p)
-                    # Get shape functions at Gauss point
-                    N_p = ShapeFunctions.shape_funcs.N[p]
+                    # loop Gauss points
+                    for p in 1:4
+                        # Get shape function derivatives in isoparametric coords
+                        B = ShapeFunctions.get_B(p)
+                        # Get shape functions at Gauss point
+                        N_p = ShapeFunctions.shape_funcs.N[p]
 
-                    #Evaluate concentration gas species concentration at Gauss point
-                    C_gp = 0.0
-                    C_gp = N_p' * C_e
+                        #Evaluate concentration gas species concentration at Gauss point
+                        C_gp = 0.0
+                        C_gp = N_p' * C_e
 
-                    #Evaluate temperature at Gauss point
-                    T_gp = 0.0
-                    T_gp = N_p' * T_e
-                    
-                    # Get inverse Jacobian and determinant
-                    invJ = ShapeFunctions.get_invJ(e, p)
-                    detJ = ShapeFunctions.get_detJ(e, p)
-                    Wp= ShapeFunctions.shape_funcs.gauss_weights[p]
-                    
-                    # Transform derivatives to physical coordinates
-                    # dN/dx = B · J^-1
-                    dN_dx = B * invJ  # [4 nodes, 2 coords]
+                        #Evaluate temperature at Gauss point
+                        T_gp = 0.0
+                        T_gp = N_p' * T_e
+                        
+                        # Get inverse Jacobian and determinant
+                        invJ = ShapeFunctions.get_invJ(e, p)
+                        detJ = ShapeFunctions.get_detJ(e, p)
+                        Wp= ShapeFunctions.shape_funcs.gauss_weights[p]
+                        
+                        # Transform derivatives to physical coordinates
+                        # dN/dx = B · J^-1
+                        dN_dx = B * invJ  # [4 nodes, 2 coords]
 
-                    #Update diffusion flow vector ∑_p K^p * T^p *C^p * k^p_elm *C_tot * det(J) * W_p / μ_g^p 
-                    q_aux += (R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g) .* (dN_dx * dN_dx') * C_t
+                        #Update diffusion flow vector ∑_p K^p * T^p *C^p * k^p_elm *C_tot * det(J) * W_p / μ_g^p 
+                        q_aux += (R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g) .* (dN_dx * dN_dx') * C_t
+                    end
+                    for i in 1:4 #loop nodes in element       
+                        node_id = nodes[i] #global node id
+                        q_advection[node_id, gas_idx] +=  q_aux[i]
+                    end
                 end
-                for i in 1:4 #loop nodes in element       
-                    node_id = nodes[i] #global node id
-                    q_advection[node_id, gas_idx] +=  q_aux[i]
-                end
+                #______________________________________________________
 
             end # flux are ready for this gas
 
@@ -485,14 +504,16 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
         # Check if we need to save output
         if save_data || step == num_steps
-            # Write output
-            write_output_vtk(mesh, materials, output_counter, current_time, calc_params, total_concentration)
-            
+
             # Calculate progress percentage
             progress = 100.0 * step / num_steps
-            log_print(@sprintf("      Load Step %d/%d (%.1f%%), Time = %.4e %s",
-                              step, num_steps, progress, current_time, 
+            log_print(@sprintf("      Load Step %d (%.1f%%), Time = %.4e %s",
+                              output_counter, progress, current_time, 
                               calc_params["units"]["time_unit"]))
+
+            # Write output
+            write_output_vtk(mesh, materials, output_counter, current_time, project_name, total_concentration)          
+
             
             # Update next output time
             next_output_time += load_step_time
@@ -517,7 +538,7 @@ end
 
 
 """
-    write_output_vtk(mesh, materials, step::Int, time::Float64, calc_params)
+    write_output_vtk(mesh, materials, step::Int, time::Float64, project_name, total_concentration)
 
 Write VTK output file for the current time step.
 
@@ -526,11 +547,12 @@ Write VTK output file for the current time step.
 - `materials`: Material data structure
 - `step::Int`: Output file counter
 - `time::Float64`: Current simulation time
-- `calc_params`: Calculation parameters
+- `project_name::String`: Name of the project for output files
+- `total_concentration`: Total gas concentration vector
 """
-function write_output_vtk(mesh, materials, step::Int, time::Float64, calc_params, total_concentration)
+function write_output_vtk(mesh, materials, step::Int, time::Float64, project_name, total_concentration)
     output_dir = "output"
-    filename = joinpath(output_dir, "simulation")
+    filename = joinpath(output_dir, project_name)
     
     # Prepare data for VTK output
     gas_names = materials.gas_dictionary   

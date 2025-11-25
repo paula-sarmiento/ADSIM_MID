@@ -115,7 +115,7 @@ function main()
         # Step 3: Read calculation parameters
         log_print("\n[3/N] Reading calculation parameters file: $(calc_file)")
         calc_params = get_all_calc_params(calc_file)
-        log_print("   ✓ Solver type: $(calc_params["solver_type"])")
+        log_print(log_analysis_type(calc_params["solver_settings"]))
         log_print("   ✓ Total simulation time: $(calc_params["time_stepping"]["total_simulation_time"]) $(calc_params["units"]["time_unit"])")
 
         # Step 4: Initialize simulation variables
@@ -136,15 +136,16 @@ function main()
         log_print("   ✓ Shape functions and Jacobians precomputed")
         
         log_print("\n[7/N] Calculating time step information")
-        time_data = calculate_time_step_info(mesh, materials, calc_params)
+        time_data, limiting_scale = calculate_time_step_info(mesh, materials, calc_params)
         log_print(@sprintf("   ✓ Minimum characteristic length: %.3g %s", time_data.h_min, calc_params["units"]["geometry_unit"]))
         log_print(@sprintf("   ✓ Critical time step: %.4g %s", time_data.critical_dt, calc_params["units"]["time_unit"]))
+        log_print("   ✓ Limiting time scale: $(limiting_scale)")
         log_print("   ✓ Courant number: $(time_data.courant_number)")
         log_print(@sprintf("   ✓ Actual time step: %.4g %s", time_data.actual_dt, calc_params["units"]["time_unit"]))
         log_print("   ✓ Number of time steps: $(time_data.num_steps)")
 
         # Step 8: Run fully explicit solver
-        fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, log_print)
+        fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print)
 
         # Print total run time
         end_time = now()

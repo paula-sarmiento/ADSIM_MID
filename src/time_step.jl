@@ -265,7 +265,7 @@ function get_minimum_permeability_ratio(mesh, materials, T_ref::Float64)
             K = soil.intrinsic_permeability
             
             if K > 0.0 && C_max > 0.0
-                ratio = μ_min / (C_max * K * T_ref * R)
+                ratio = μ_min / (4* C_max * K * T_ref * R)
                 ratio_min = min(ratio_min, ratio)
             end
         end
@@ -389,7 +389,7 @@ function calculate_critical_time_step(mesh, materials, T_ref::Float64)
     
     dt_diffusion = Inf
     if D_max > 0.0 && θ_g_min > 0.0
-        dt_diffusion = (h_min^2 * τ_min) / (θ_g_min * D_max)
+        dt_diffusion = (h_min^2 * τ_min) / (4 * θ_g_min * D_max)
     end
     
     # Calculate advective time scale
@@ -404,20 +404,21 @@ function calculate_critical_time_step(mesh, materials, T_ref::Float64)
     C_co2_max = get_maximum_co2_concentration(mesh, materials)
     reaction_param_max = get_maximum_reaction_parameters(mesh, materials, C_co2_max)
     if reaction_param_max > 0.0
-        dt_reaction = 1.0 / reaction_param_max
+        dt_reaction = 1.0 / (2 * reaction_param_max)
     end
     
-    # Print limiting time scale based on which is smallest
+    # Determine limiting time scale based on which is smallest
+    limiting_scale = "Unknown"
     if dt_diffusion <= dt_advection && dt_diffusion <= dt_reaction
-        println("   ✓ Limiting time scale: Diffusive")
+        limiting_scale = "Diffusive"
     elseif dt_advection <= dt_diffusion && dt_advection <= dt_reaction
-        println("   ✓ Limiting time scale: Advective")
+        limiting_scale = "Advective"
     else
-        println("   ✓ Limiting time scale: Reactive")
+        limiting_scale = "Reactive"
     end
     
-    # Return minimum of all three time scales
-    return min(dt_diffusion, dt_advection, dt_reaction)
+    # Return minimum of all three time scales and the limiting scale
+    return min(dt_diffusion, dt_advection, dt_reaction), limiting_scale
 end
 
 
@@ -458,7 +459,7 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
 
     
     # Calculate critical time step
-    time_data.critical_dt = calculate_critical_time_step(mesh, materials, T_ref)
+    time_data.critical_dt, limiting_scale = calculate_critical_time_step(mesh, materials, T_ref)
     
     # Get Courant number from calculation parameters
     time_data.courant_number = calc_params["time_stepping"]["courant_number"]
@@ -484,7 +485,7 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
     # Store minimum characteristic length
     time_data.h_min = find_minimum_characteristic_length(mesh)
     
-    return time_data
+    return time_data, limiting_scale
 end
 
 

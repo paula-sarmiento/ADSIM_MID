@@ -3,13 +3,13 @@
 <container n="Calculation_Data" pn="Calculation Data" icon="icon_calculation.png" help="Define calculation parameters for the simulation.">
 
 	<container n="solver_type" pn="Solver type" icon="" >
-		<value n="dimension_selection" pn="Select dimension" icon="" values="2D-Plane,2D-Axisymmetric" v="2D-Plane" editable="0"/>
+		<value n="dimension_selection" pn="Select dimension" icon="icon_calculation.png" values="2D-Plane,2D-Axisymmetric" v="2D-Plane" editable="0"/>
 		
-		<container n="calculation_mode" pn="Select solver components" icon="" help="Activate the components needed for your analysis">
-			<value n="diffusion" pn="Diffusion" v="false" values="true,false" help="Enable diffusion component"/>
-			<value n="advection" pn="Advection" v="false" values="true,false" help="Enable advection component"/>
-			<value n="gravity" pn="Gravity" v="false" values="true,false" help="Enable gravity effects"/>
-			<value n="reaction_kinetics" pn="Reaction kinetics" v="false" values="true,false" help="Enable reaction kinetics"/>
+		<container n="calculation_mode" pn="Select solver components" icon="icon_calculation.png" help="Activate the components needed for your analysis">
+			<value n="diffusion" pn="Diffusion" v="0" values="1,0" help="Enable diffusion component"/>
+			<value n="advection" pn="Advection" v="0" values="1,0" help="Enable advection component"/>
+			<value n="gravity" pn="Gravity" v="0" values="1,0" help="Enable gravity effects"/>
+			<value n="reaction_kinetics" pn="Reaction kinetics" v="0" values="1,0" help="Enable reaction kinetics"/>
 		</container>
 	</container>	
 

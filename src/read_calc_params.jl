@@ -62,18 +62,25 @@ function get_gravity(calc_data::Dict)
 end
 
 """
-    get_solver_type(calc_data::Dict)
+    get_solver_settings(calc_data::Dict)
 
-Extract solver type from calculation data.
+Extract solver settings from calculation data including dimension and calculation mode flags.
 
 # Arguments
 - `calc_data::Dict`: Dictionary containing calculation parameters
 
 # Returns
-- String with solver type
+- Dictionary with solver dimension and calculation mode components
 """
-function get_solver_type(calc_data::Dict)
-    return calc_data["solver"]["solver_type"]
+function get_solver_settings(calc_data::Dict)
+    solver = calc_data["solver"]
+    return Dict(
+        "dimension" => solver["solver_type"],
+        "diffusion" => solver["diffusion"],
+        "advection" => solver["advection"],
+        "gravity" => solver["gravity"],
+        "reaction_kinetics" => solver["reaction_kinetics"]
+    )
 end
 
 """
@@ -150,6 +157,36 @@ function get_probing_elements(calc_data::Dict)
 end
 
 """
+    log_analysis_type(solver_settings::Dict)
+
+Generate analysis type log message based on enabled solver components.
+
+# Arguments
+- `solver_settings::Dict`: Dictionary containing solver settings
+
+# Returns
+- String with formatted analysis type information
+"""
+function log_analysis_type(solver_settings::Dict)
+    msg = "   ✓ Dimension: $(solver_settings["dimension"])\n"
+    
+    # Build component list (values are 0 or 1)
+    components = String[]
+    solver_settings["diffusion"] == 1 && push!(components, "Diffusion")
+    solver_settings["advection"] == 1 && push!(components, "Advection")
+    solver_settings["gravity"] == 1 && push!(components, "Gravity")
+    solver_settings["reaction_kinetics"] == 1 && push!(components, "Reaction Kinetics")
+    
+    if isempty(components)
+        msg *= "   ✓ Solver: WARNING - No components selected!"
+    else
+        msg *= "   ✓ Solver: $(join(components, " + "))"
+    end
+    
+    return msg
+end
+
+"""
     get_all_calc_params(filename::String)
 
 Read calculation parameters from a TOML file and return a structured dictionary
@@ -167,7 +204,7 @@ function get_all_calc_params(filename::String)
     return Dict(
         "units" => get_units(calc_data),
         "gravity" => get_gravity(calc_data),
-        "solver_type" => get_solver_type(calc_data),
+        "solver_settings" => get_solver_settings(calc_data),
         "time_stepping" => get_time_stepping(calc_data),
         "data_saving_interval" => get_data_saving_interval(calc_data),
         "probing_nodes" => get_probing_nodes(calc_data),
