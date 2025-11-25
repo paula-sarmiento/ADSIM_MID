@@ -335,6 +335,13 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     calculate_gravity = solver_settings["gravity"] == 1
     calculate_reaction = solver_settings["reaction_kinetics"] == 1
     
+    # Get gravity vector from calc_params
+    gravity_params = calc_params["gravity"]
+    g_magnitude = gravity_params["magnitude"]
+    g_x = gravity_params["x_component"]
+    g_y = gravity_params["y_component"]
+    g_vector = [g_x, g_y] * g_magnitude  # [m/s²]
+    
     # Time stepping parameters
     dt = time_data.actual_dt
     total_time = time_data.total_time
@@ -358,6 +365,11 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
     #Calculate total gas concentrations
     total_concentration = vec(sum(C_g, dims=2))
+
+    #Calculate the absolute pressure 
+    global P 
+    P= total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
+
     
     # Write initial state (t = 0)
     log_print("      Load step 0 (0.0%)")
@@ -374,6 +386,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
         #reset flow vectors
         q_diffusion = zeros(Float64, Nnodes, NGases)
         q_advection = zeros(Float64, Nnodes, NGases)
+        q_gravitational = zeros(Float64, Nnodes, NGases)
 
         # Loop over all gases
         @threads for gas_idx in 1:NGases
@@ -461,6 +474,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                         # Get inverse Jacobian and determinant
                         invJ = ShapeFunctions.get_invJ(e, p)
                         detJ = ShapeFunctions.get_detJ(e, p)
+
                         Wp= ShapeFunctions.shape_funcs.gauss_weights[p]
                         
                         # Transform derivatives to physical coordinates
@@ -477,11 +491,60 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 end
                 #______________________________________________________
 
+                #______________________________________________________
+                #Gravity calculation start here
+                #______________________________________________________
+
+                if calculate_gravity                    
+                    #Zero nodal advection fluxes
+                    q_aux= zeros(4) #local advection flow vector
+
+                    # loop Gauss points
+                    for p in 1:4
+                        # Get shape function derivatives in isoparametric coords
+                        B = ShapeFunctions.get_B(p)
+
+                        # Get shape functions at Gauss point
+                        N_p = ShapeFunctions.shape_funcs.N[p]
+
+                        #Evaluate concentration gas species concentration at Gauss point
+                        C_gp = 0.0
+                        C_gp = N_p' * C_e
+                        
+                        # Get inverse Jacobian and determinant
+                        invJ = ShapeFunctions.get_invJ(e, p)
+                        detJ = ShapeFunctions.get_detJ(e, p)
+
+                        Wp= ShapeFunctions.shape_funcs.gauss_weights[p]
+                        
+                        # Transform derivatives to physical coordinates
+                        # dN/dx = B · J^-1
+                        dN_dx = B * invJ  # [4 nodes, 2 coords]
+
+                        #get nodal densities
+                        ρ_g = zeros(4)
+                        for i in 1:4
+                            for g in 1:NGases
+                                gas_name = materials.gas_dictionary[g]
+                                gas = materials.gases[gas_name]
+                                ρ_g[i] += C_g[nodes[i], g] * gas.molar_mass
+                            end
+                        end
+
+                        #Update diffusion flow vector ∑_p R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g  * (dN_dx · g) * N_p *∑ M C_g
+                        q_aux += ( k_intrinsic * C_gp * detJ * Wp / μ_g) .* (dN_dx * g_vector) .* N_p' * ρ_g
+                    end
+                    for i in 1:4 #loop nodes in element       
+                        node_id = nodes[i] #global node id
+                        q_gravitational[node_id, gas_idx] +=  q_aux[i]
+                    end
+                end
+
             end # flux are ready for this gas
 
             # calculate rate of change dC/dt = q_net / M
             for i in 1:Nnodes
-                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
+                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
             end
 
             # Update concentrations: C^(n+1) = C^n + dt * dC/dt
@@ -495,11 +558,119 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                     log_print("Warning: Negative concentration detected at node $i for gas $gas_name. Setting to zero.")
                 end
             end
-                        
+
         end
         
         # Calculate total gas concentrations after all gases are updated
         total_concentration = vec(sum(C_g, dims=2))
+
+        #Update pressure using ideal gas law
+        P= total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
+
+        #Calculate nodal gas velocities using Darcy's law
+        #zero the velocity vector
+        global v
+        v .= 0.0
+
+        #loop over elements
+        for e in 1:Nelements
+            # Get element nodes
+            nodes = mesh.elements[e, :]
+
+            #print elements in log for debugging
+            #log_print("Element $e nodes: $(nodes)")
+
+            # Get material properties for this element
+            material_idx = get_element_material(mesh, e)
+            if material_idx === nothing # No material assigned
+                error("Element $e has no material assigned. Check mesh material definitions.")
+            end
+            
+            soil_name = materials.soil_dictionary[material_idx]
+            soil = materials.soils[soil_name]
+            
+            # Get intrinsic permeability
+            k_intrinsic = soil.intrinsic_permeability
+
+            # Get nodal pressures
+            P_e = [P[nodes[i]] for i in 1:4]
+
+            # loop Gauss points
+            for p in 1:4
+                #Get shape functions at Gauss point
+                N_p = ShapeFunctions.shape_funcs.N[p]
+
+                # Get shape function derivatives in isoparametric coords
+                B = ShapeFunctions.get_B(p)
+
+                # Get inverse Jacobian
+                invJ = ShapeFunctions.get_invJ(e, p)
+
+                # Transform derivatives to physical coordinates
+                # dN/dx = B · J^-1
+                dN_dx = B * invJ  # [4 nodes, 2 coords]
+
+                #Evaluate pressure gradient at Gauss point
+                grad_P =  dN_dx' * P_e  # [2 coords] #needs to check signs
+
+                #Evaluate total concentration at Gauss point
+                C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
+
+                #Calculate concentration-weighted mean dynamic viscosity
+                μ_g_weighted = 0.0
+                if C_total_gp > 0.0
+                    for g in 1:NGases
+                        C_g_gp = N_p' * [C_g[nodes[i], g] for i in 1:4]
+                        gas_name = materials.gas_dictionary[g]
+                        μ_g_weighted += (C_g_gp / C_total_gp) * materials.gases[gas_name].dynamic_viscosity
+                    end
+                else
+                    # Fallback to simple mean if total concentration is zero
+                    μ_g_weighted = mean([materials.gases[materials.gas_dictionary[g]].dynamic_viscosity for g in 1:NGases])
+                end
+
+                #Calculate velocity at Gauss point using Darcy's law: v = - (k/μ) ∇P
+                v_gp = - (k_intrinsic / μ_g_weighted) * grad_P
+                
+                #Distribute velocity to nodes (simple averaging)
+                for i in 1:4
+                    node_id = nodes[i]
+                    v[node_id, :] += v_gp * N_p[i]
+                    # if P_boundary at node is fixed add velocity again at that node
+                    if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
+                        v[node_id, :] += v_gp * N_p[i]
+                    end
+                end
+
+                #consider velocity contribution from gravity
+                if calculate_gravity
+                    #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
+                    #get nodal densities
+                    ρ_g = zeros(4)
+                    for i in 1:4
+                        for g in 1:NGases
+                            gas_name = materials.gas_dictionary[g]
+                            gas = materials.gases[gas_name]
+                            ρ_g[i] += C_g[nodes[i], g] * gas.molar_mass
+                        end
+                    end
+                    ρ_g_gp = N_p' * ρ_g
+
+                    v_g_gp = - (k_intrinsic / μ_g_weighted) * ρ_g_gp * g_vector
+
+                    #Distribute gravitational velocity to nodes (simple averaging)
+                    for i in 1:4
+                        node_id = nodes[i]
+                        v[node_id, :] += v_g_gp * N_p[i]
+                        # if P_boundary at node is fixed add velocity again at that node
+                        if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
+                            v[node_id, :] += v_g_gp * N_p[i]
+                        end
+                    end
+                end
+            end
+        end
+
         
         # Update current time
         current_time += dt
