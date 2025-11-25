@@ -113,16 +113,41 @@ proc ADSIM::WriteGravity { root } {
 # Write solver settings
 #===============================================================================
 proc ADSIM::WriteSolver { root } {
-    # Get solver type
-    set xp_solver {//container[@n="Calculation_Data"]/value[@n="solver_type"]}
-    set solver_type [$root selectNodes {string(//container[@n="Calculation_Data"]/value[@n="solver_type"]/@v)}]
+    # Get solver container
+    set xp_solver {//container[@n="Calculation_Data"]/container[@n="solver_type"]}
+    set solver_container [$root selectNodes $xp_solver]
     
-    if {$solver_type == ""} {
+    if {$solver_container == ""} {
         return
     }
     
     GiD_WriteCalculationFile puts "\[solver\]"
-    GiD_WriteCalculationFile puts "solver_type = \"$solver_type\""
+    
+    # Dimension selection
+    set dimension [$solver_container selectNodes {string(value[@n="dimension_selection"]/@v)}]
+    GiD_WriteCalculationFile puts "solver_type = \"$dimension\""
+    
+    # Calculation mode components
+    set calc_mode_container [$solver_container selectNodes {container[@n="calculation_mode"]}]
+    
+    if {$calc_mode_container != ""} {
+        # Diffusion
+        set diffusion [$calc_mode_container selectNodes {string(value[@n="diffusion"]/@v)}]
+        GiD_WriteCalculationFile puts "diffusion = $diffusion"
+        
+        # Advection
+        set advection [$calc_mode_container selectNodes {string(value[@n="advection"]/@v)}]
+        GiD_WriteCalculationFile puts "advection = $advection"
+        
+        # Gravity
+        set gravity [$calc_mode_container selectNodes {string(value[@n="gravity"]/@v)}]
+        GiD_WriteCalculationFile puts "gravity = $gravity"
+        
+        # Reaction kinetics
+        set reaction_kinetics [$calc_mode_container selectNodes {string(value[@n="reaction_kinetics"]/@v)}]
+        GiD_WriteCalculationFile puts "reaction_kinetics = $reaction_kinetics"
+    }
+    
     GiD_WriteCalculationFile puts ""
 }
 

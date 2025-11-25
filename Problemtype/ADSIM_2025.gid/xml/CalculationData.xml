@@ -2,7 +2,16 @@
 
 <container n="Calculation_Data" pn="Calculation Data" icon="icon_calculation.png" help="Define calculation parameters for the simulation.">
 
-	<value n="solver_type" pn="Select solver type" icon="" values="2D-Plane,2D-Axisymmetric" v="2D-Plane" editable="0"/>
+	<container n="solver_type" pn="Solver type" icon="" >
+		<value n="dimension_selection" pn="Select dimension" icon="" values="2D-Plane,2D-Axisymmetric" v="2D-Plane" editable="0"/>
+		
+		<container n="calculation_mode" pn="Select solver components" icon="" help="Activate the components needed for your analysis">
+			<value n="diffusion" pn="Diffusion" v="false" values="true,false" help="Enable diffusion component"/>
+			<value n="advection" pn="Advection" v="false" values="true,false" help="Enable advection component"/>
+			<value n="gravity" pn="Gravity" v="false" values="true,false" help="Enable gravity effects"/>
+			<value n="reaction_kinetics" pn="Reaction kinetics" v="false" values="true,false" help="Enable reaction kinetics"/>
+		</container>
+	</container>	
 
 	<container n="calculation_stepping_data" pn="Time stepping data" icon="icon_time.png" >
 		<value n="simulation_time" pn="Total time of simulation [T]" v="0.0" state="normal"/>
