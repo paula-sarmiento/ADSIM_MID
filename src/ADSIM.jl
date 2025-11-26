@@ -1,9 +1,6 @@
 module ADSIM
 
-"""
-ADSIM main entrypoint. Loads `kernel.jl`, which defines `main()` and the
-supporting routines for running a project from the command line.
-"""
+# Load the main driver and supporting routines defined in kernel.jl.
 include("kernel.jl")
 
 export main

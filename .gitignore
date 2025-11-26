@@ -35,3 +35,5 @@ JuliaLocalPreferences.toml
 
 #entire folder output
 output/
+# Compiled application folder
+ADSIM_app/
