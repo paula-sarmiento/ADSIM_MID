@@ -334,7 +334,7 @@ where:
 - K = stiffness matrix from diffusion term
 """
 function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print)
-    log_print("\n[8/N] Starting fully explicit diffusion solver")
+    log_print("\n[8/8] Starting fully explicit diffusion solver")
     log_print("   Using $(Threads.nthreads()) threads for parallel execution")
 
     # Universal gas constant [J/(mol·K)]

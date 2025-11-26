@@ -101,48 +101,48 @@ function main()
         log_print("="^64)
 
         # Step 1: Read mesh data
-        log_print("\n[1/N] Reading mesh file: $(mesh_file)")
+        log_print("\n[1/8] Reading mesh file: $(mesh_file)")
         mesh = read_mesh_file(mesh_file)
         log_print("   ✓ Loaded $(mesh.num_nodes) nodes and $(mesh.num_elements) elements")
         log_print("   ✓ Loaded initial and boundary conditions")
 
         # Step 2: Read Material properties
-        log_print("\n[2/N] Reading material properties file: $(mat_file)")
+        log_print("\n[2/8] Reading material properties file: $(mat_file)")
         materials = read_materials_file(mat_file)
         log_print("   ✓ Loaded $(length(materials.gas_dictionary)) gases")
         log_print("   ✓ Loaded $(length(materials.soil_dictionary)) soils")
 
         # Step 3: Read calculation parameters
-        log_print("\n[3/N] Reading calculation parameters file: $(calc_file)")
+        log_print("\n[3/8] Reading calculation parameters file: $(calc_file)")
         calc_params = get_all_calc_params(calc_file)
         log_print(log_analysis_type(calc_params["solver_settings"]))
         log_print("   ✓ Total simulation time: $(calc_params["time_stepping"]["total_simulation_time"]) $(calc_params["units"]["time_unit"])")
 
         # Step 3.5: Validate reaction kinetics requirements
         if calc_params["solver_settings"]["reaction_kinetics"] == 1
-            log_print("\n[3.5/N] Validating reaction kinetics requirements")
+            log_print("\nValidating reaction kinetics requirements")
             validate_reaction_kinetics_requirements(calc_params["solver_settings"], materials)
             log_print("   ✓ CO2 gas is defined in materials")
         end
 
         # Step 4: Initialize simulation variables
-        log_print("\n[4/N] Initializing simulation variables")
+        log_print("\n[4/8] Initializing simulation variables")
         zero_variables!(mesh, materials)
         log_print("   ✓ Allocated arrays for $(Nnodes) nodes")
         log_print("   ✓ Tracking $(NGases) gas species in $(NSoils) soil types")
 
         # Step 5: Apply initial conditions and initialize flows
-        log_print("\n[5/N] Applying initial conditions and initializing flows")
+        log_print("\n[5/8] Applying initial conditions and initializing flows")
         apply_all_initial_conditions!(mesh, materials)
         initialize_all_flows!(mesh, materials, Nnodes, NGases)
         log_print("   ✓ Initial and boundary conditions applied")
 
         # Step 6: Initialize shape functions and calculate time step information
-        log_print("\n[6/N] Initializing shape functions")
+        log_print("\n[6/8] Initializing shape functions")
         initialize_shape_functions!(mesh)
         log_print("   ✓ Shape functions and Jacobians precomputed")
         
-        log_print("\n[7/N] Calculating time step information")
+        log_print("\n[7/8] Calculating time step information")
         time_data, limiting_scale = calculate_time_step_info(mesh, materials, calc_params)
         log_print(@sprintf("   ✓ Minimum characteristic length: %.3g %s", time_data.h_min, calc_params["units"]["geometry_unit"]))
         log_print(@sprintf("   ✓ Critical time step: %.4g %s", time_data.critical_dt, calc_params["units"]["time_unit"]))
