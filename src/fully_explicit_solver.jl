@@ -342,6 +342,14 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     M_caco3= 100.09 #g/mol
     ρ_caco3= 2.71e6 #g/m³
     
+    # Reaction enthalpy for lime carbonation [J/mol CO2]
+    # Ca(OH)2 + CO2 -> CaCO3 + H2O  ΔH_r ≈ -113 kJ/mol (exothermic)
+    ΔH_r = 113000.0  # J/mol CO2
+    
+    # Constant specific heat for all gases [J/(kg·K)]
+    # Using a representative value for common gases at ambient conditions
+    c_g_constant = 1000.0  # J/(kg·K)
+    
     # Get dimensions
     Nnodes = mesh.num_nodes
     Nelements = mesh.num_elements
@@ -591,8 +599,6 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                         if gas_name == "CO2"
                             dC_lime_dt[node_id] =  - κ_co2 * θ_w * C_g[node_id, gas_idx] * (C_lime[node_id] - C_r) *heaviside(C_lime[node_id] - C_r)
                             q_source_sink[node_id] =  M[node_id] * dC_lime_dt[node_id]
-                            #calculate temperature increase due to reaction exothermicity
-                            dT_reaction_dt=  ( - dC_lime_dt[node_id] * M_caco3 ) / ( ρ_caco3 * C_p_caco3 )                            
                         end
                     end
                 end
@@ -752,6 +758,78 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
         end
 
+        # Calculate temperature change due to reaction (after all gas fluxes are calculated)
+        if calculate_reaction
+            # Find CO2 gas index (once, outside loops)
+            co2_idx = findfirst(name -> name == "CO2", materials.gas_dictionary)
+            
+            if co2_idx !== nothing
+                # Loop over elements
+                for e in 1:Nelements
+                    # Get element nodes
+                    nodes = mesh.elements[e, :]
+                    
+                    # Get material properties for this element
+                    material_idx = get_element_material(mesh, e)
+                    if material_idx !== nothing
+                        soil_name = materials.soil_dictionary[material_idx]
+                        soil = materials.soils[soil_name]
+                        
+                        # Get phase properties (element-based)
+                        n = soil.porosity
+                        S_r = soil.saturation
+                        θ_w = n * S_r
+                        θ_g = n * (1.0 - S_r)
+                        G_s = soil.specific_gravity
+                        ρ_w = materials.liquid.density
+                        ρ_s = G_s * ρ_w
+                        
+                        # Get specific heats
+                        c_s = soil.specific_heat_solids
+                        c_w = materials.liquid.specific_heat
+                        c_g = c_g_constant
+                        
+                        # Loop over nodes in element
+                        for i in 1:4
+                            node_id = nodes[i]
+                            
+                            # Calculate gas density at node
+                            ρ_g = 0.0
+                            for g in 1:NGases
+                                gas_name_temp = materials.gas_dictionary[g]
+                                gas_temp = materials.gases[gas_name_temp]
+                                ρ_g += C_g[node_id, g] * gas_temp.molar_mass
+                            end
+                            
+                            # Calculate mixture volumetric heat capacity
+                            # C_mix = (1-n)ρ_s*c_s + θ_w*ρ_w*c_w + θ_g*ρ_g*c_g
+                            C_mix = (1.0 - n) * ρ_s * c_s + θ_w * ρ_w * c_w + θ_g * ρ_g * c_g
+                            
+                            # Calculate heat generation rate from reaction: q̇ = -ΔH_r * dC_CO2/dt
+                            if C_mix > 0.0
+                                q_dot = -ΔH_r * dC_lime_dt[node_id]
+                                
+                                # Calculate temperature rate of change
+                                dT_dt[node_id] = q_dot / C_mix
+                            else
+                                dT_dt[node_id] = 0.0
+                            end
+                        end
+                    end
+                end
+            end
+            
+            # Update temperature: T^(n+1) = T^n + dt * dT/dt
+            for i in 1:Nnodes
+                T[i] += dt * dT_dt[i]
+                
+                # Ensure physically reasonable temperatures (above absolute zero)
+                if T[i] < 0.0
+                    log_print("Warning: Temperature below absolute zero at node $i. Setting to 0.0 K.")
+                    T[i] = 0.0
+                end
+            end
+        end
 
         
         # Calculate total gas concentrations after all gases are updated
