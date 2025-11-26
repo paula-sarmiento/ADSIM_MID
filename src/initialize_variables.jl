@@ -28,11 +28,16 @@ global P_boundary::Matrix{Int} = Matrix{Int}(undef, 0, 0)
 global C_lime::Vector{Float64} = Float64[]
 global C_caco3::Vector{Float64} = Float64[]
 global C_lime_residual::Vector{Float64} = Float64[]
+global Caco3_max::Vector{Float64} = Float64[]
 
 # Time derivatives
 global dC_g_dt::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global dT_dt::Vector{Float64} = Float64[]
 global dC_lime_dt::Vector{Float64} = Float64[]
+
+#Analysis variables for soil carbonation
+global binder_content::Vector{Float64} = Float64[]
+global degree_of_carbonation::Vector{Float64} = Float64[]
 
 #------------------------------------------------------------------------------
 # Initialize all variables
@@ -51,7 +56,7 @@ The exclamation mark indicates it modifies global variables.
 function zero_variables!(mesh, materials)
     global NDim, Nnodes, Nelements, NSoils, NGases
     global C_g, P, T, v, P_boundary
-    global C_lime, C_caco3, C_lime_residual
+    global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt
     
     # Set dimensions
@@ -77,6 +82,11 @@ function zero_variables!(mesh, materials)
     dC_g_dt = zeros(Float64, Nnodes, NGases)
     dT_dt = zeros(Float64, Nnodes)
     dC_lime_dt = zeros(Float64, Nnodes)    
+
+    # Allocate analysis variables
+    binder_content = zeros(Float64, Nnodes)
+    degree_of_carbonation = zeros(Float64, Nnodes)
+    Caco3_max = zeros(Float64, Nnodes)
 
 end
 
@@ -223,7 +233,7 @@ the lime content from that material, and assigns it to all nodes in the element.
   the last element's value will be used
 """
 function apply_initial_lime_concentration!(mesh, materials)
-    global C_lime, C_lime_residual
+    global C_lime, C_lime_residual, Caco3_max
     
     # Loop through all elements
     for elem_id in 1:mesh.num_elements
@@ -249,13 +259,17 @@ function apply_initial_lime_concentration!(mesh, materials)
                 #Calculatte reidual lime 
                 residual_percent= soil_props.residual_lime
                 C_lime_residual[material_idx] = residual_percent * lime_concentration
+
+                #Calculate Caco3 max for degree of carbonation
+                Caco3_max_concentration= lime_concentration * (100.09 / 74.093) #Molar mass ratio CaCO3/Ca(OH)2
                 
                 # Get nodes of this element
                 element_nodes = get_element_nodes(mesh, elem_id)
                 
-                # Assign lime content to each node of the element
+                # Assign lime content and Caco3_max to each node of the element
                 for node_id in element_nodes
                     C_lime[node_id] = lime_concentration
+                    Caco3_max[node_id] = Caco3_max_concentration
                 end
             end
         end

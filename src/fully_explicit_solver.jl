@@ -339,6 +339,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
     # Universal gas constant [J/(mol·K)]
     R = 8.314
+    M_caco3= 100.09 #g/mol
+    ρ_caco3= 2.71e6 #g/m³
     
     # Get dimensions
     Nnodes = mesh.num_nodes
@@ -589,6 +591,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                         if gas_name == "CO2"
                             dC_lime_dt[node_id] =  - κ_co2 * θ_w * C_g[node_id, gas_idx] * (C_lime[node_id] - C_r) *heaviside(C_lime[node_id] - C_r)
                             q_source_sink[node_id] =  M[node_id] * dC_lime_dt[node_id]
+                            #calculate temperature increase due to reaction exothermicity
+                            dT_reaction_dt=  ( - dC_lime_dt[node_id] * M_caco3 ) / ( ρ_caco3 * C_p_caco3 )                            
                         end
                     end
                 end
@@ -726,7 +730,11 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                         log_print("Warning: Negative lime concentration detected at node $i. Setting to zero.")
                     end
                     #Update caco3_concentration
-                    C_caco3[i] += dt * (- dC_lime_dt[i]) 
+                    C_caco3[i] += dt * (- dC_lime_dt[i])
+                    #calculate binder content β_b= V_caco3/V_total
+                    binder_content[i]= C_caco3[i] * M_caco3 / ρ_caco3
+                    #calculate degree of carbonation DoC= C_caco3/C_caco3_max
+                    degree_of_carbonation[i] = C_caco3[i] / Caco3_max[i]
                 end
             end
 
@@ -808,11 +816,8 @@ function write_output_vtk(mesh, materials, step::Int, time::Float64, project_nam
     filename = joinpath(output_dir, project_name)
     
     # Prepare data for VTK output
-    gas_names = materials.gas_dictionary   
-    
-    # Placeholder arrays for unused fields (filled with zeros for now)
-    degree_of_carbonation = zeros(mesh.num_nodes)
-    volumetric_binder_content = zeros(mesh.num_nodes)
+    gas_names = materials.gas_dictionary    
+
     
     # Call VTK writer
     WriteVTK.write_vtk_file(
@@ -829,7 +834,7 @@ function write_output_vtk(mesh, materials, step::Int, time::Float64, project_nam
         C_lime,
         C_caco3,
         degree_of_carbonation,
-        volumetric_binder_content,
+        binder_content,
         v,
         T,
         dT_dt
