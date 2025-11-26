@@ -221,7 +221,7 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.intrinsic_permeability = Float64(soil_info["intrinsic_permeability"])
         soil_props.lime_content = Float64(soil_info["lime_content"])
         soil_props.residual_lime = Float64(soil_info["residual_lime"])
-        soil_props.reaction_rate = Float64(get(soil_info, "reaction_rate", 0.0))
+        soil_props.reaction_rate = Float64(get(soil_info, "lime_reaction_rate", 0.0))
         
         # Read thermal properties
         soil_props.specific_heat_solids = Float64(soil_info["specific_heat_solids"])

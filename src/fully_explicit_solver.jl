@@ -403,8 +403,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
         #reset flow vectors
         q_diffusion = zeros(Float64, Nnodes, NGases)
         q_advection = zeros(Float64, Nnodes, NGases)
-        q_gravitational = zeros(Float64, Nnodes, NGases)
-        q_reaction = zeros(Float64, Nnodes, NGases)
+        q_gravitational = zeros(Float64, Nnodes, NGases)        
         q_source_sink= zeros(Float64, Nnodes) # Only for CO2 for now
 
         # Loop over all gases
@@ -581,7 +580,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                     θ_w= n * S_r  # volumetric water content
 
                     #Get residual lime concentration in the soil
-                    C_r= C_lime_residual[material_idx]
+                    C_r= C_lime_residual[material_idx]                    
 
                     #loop over nodes in element
                     for i in 1:4    
@@ -596,13 +595,124 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 #______________________________________________________
 
             end # flux are ready for this gas
+
+            #Calculate nodal gas velocities using Darcy's law
+            #zero the velocity vector
+            global v
+            v .= 0.0
+
+            #loop over elements
+            for e in 1:Nelements
+                # Get element nodes
+                nodes = mesh.elements[e, :]
+
+                #print elements in log for debugging
+                #log_print("Element $e nodes: $(nodes)")
+
+                # Get material properties for this element
+                material_idx = get_element_material(mesh, e)
+                if material_idx === nothing # No material assigned
+                    error("Element $e has no material assigned. Check mesh material definitions.")
+                end
+                
+                soil_name = materials.soil_dictionary[material_idx]
+                soil = materials.soils[soil_name]
+                
+                # Get intrinsic permeability
+                k_intrinsic = soil.intrinsic_permeability
+
+                # Get nodal pressures
+                P_e = [P[nodes[i]] for i in 1:4]
+
+                # loop Gauss points
+                for p in 1:4
+                    #Get shape functions at Gauss point
+                    N_p = ShapeFunctions.shape_funcs.N[p]
+
+                    # Get shape function derivatives in isoparametric coords
+                    B = ShapeFunctions.get_B(p)
+
+                    # Get inverse Jacobian
+                    invJ = ShapeFunctions.get_invJ(e, p)
+
+                    # Transform derivatives to physical coordinates
+                    # dN/dx = B · J^-1
+                    dN_dx = B * invJ  # [4 nodes, 2 coords]
+
+                    #Evaluate pressure gradient at Gauss point
+                    grad_P =  dN_dx' * P_e  # [2 coords] #needs to check signs
+
+                    #Evaluate total concentration at Gauss point
+                    C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
+
+                    #Calculate concentration-weighted mean dynamic viscosity
+                    μ_g_weighted = 0.0
+                    if C_total_gp > 0.0
+                        for g in 1:NGases
+                            C_g_gp = N_p' * [C_g[nodes[i], g] for i in 1:4]
+                            gas_name = materials.gas_dictionary[g]
+                            μ_g_weighted += (C_g_gp / C_total_gp) * materials.gases[gas_name].dynamic_viscosity
+                        end
+                    else
+                        # Fallback to simple mean if total concentration is zero
+                        μ_g_weighted = mean([materials.gases[materials.gas_dictionary[g]].dynamic_viscosity for g in 1:NGases])
+                    end
+
+                    #Calculate velocity at Gauss point using Darcy's law: v = - (k/μ) ∇P
+                    v_gp = - (k_intrinsic / μ_g_weighted) * grad_P
+                    
+                    #Distribute velocity to nodes (simple averaging)
+                    for i in 1:4
+                        node_id = nodes[i]
+                        v[node_id, :] += v_gp * N_p[i]
+                        # if P_boundary at node is fixed add velocity again at that node
+                        if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
+                            v[node_id, :] += v_gp * N_p[i]
+                        end
+                    end
+
+                    #consider velocity contribution from gravity
+                    if calculate_gravity
+                        #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
+                        #get nodal densities
+                        ρ_g = zeros(4)
+                        for i in 1:4
+                            for g in 1:NGases
+                                gas_name = materials.gas_dictionary[g]
+                                gas = materials.gases[gas_name]
+                                ρ_g[i] += C_g[nodes[i], g] * gas.molar_mass
+                            end
+                        end
+                        ρ_g_gp = N_p' * ρ_g
+
+                        v_g_gp = - (k_intrinsic / μ_g_weighted) * ρ_g_gp * g_vector
+
+                        #Distribute gravitational velocity to nodes (simple averaging)
+                        for i in 1:4
+                            node_id = nodes[i]
+                            v[node_id, :] += v_g_gp * N_p[i]
+                            # if P_boundary at node is fixed add velocity again at that node
+                            if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
+                                v[node_id, :] += v_g_gp * N_p[i]
+                            end
+                        end
+                    end
+                end
+            end
             
 
 
             # calculate rate of change dC/dt = q_net / M
-            for i in 1:Nnodes
-                isCO2= gas_name == "CO2"
-                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx] + q_source_sink[i] * isCO2) * P_boundary[i, gas_idx]) / M[i]
+            @threads for i in 1:Nnodes                
+                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx] ) * P_boundary[i, gas_idx]) / M[i]
+                if gas_name == "CO2" && calculate_reaction                    
+                    #include reaction source/sink term
+                    Aux= dC_g_dt[i, gas_idx] + ((q_source_sink[i] * P_boundary[i, gas_idx]) / M[i])
+                    if C_g[i, gas_idx] + dt * Aux < 0.0 #can't consume more CO2 than available
+                        dC_g_dt[i, gas_idx] = - C_g[i, gas_idx] / dt
+                        dC_lime_dt[i] = dC_g_dt[i, gas_idx]
+                    end
+                end
             end
 
             # Update reaction kinetic terms for lime concentration
@@ -617,7 +727,6 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                     end
                     #Update caco3_concentration
                     C_caco3[i] += dt * (- dC_lime_dt[i]) 
-
                 end
             end
 
@@ -642,111 +751,6 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
         #Update pressure using ideal gas law
         P= total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
-
-        #Calculate nodal gas velocities using Darcy's law
-        #zero the velocity vector
-        global v
-        v .= 0.0
-
-        #loop over elements
-        for e in 1:Nelements
-            # Get element nodes
-            nodes = mesh.elements[e, :]
-
-            #print elements in log for debugging
-            #log_print("Element $e nodes: $(nodes)")
-
-            # Get material properties for this element
-            material_idx = get_element_material(mesh, e)
-            if material_idx === nothing # No material assigned
-                error("Element $e has no material assigned. Check mesh material definitions.")
-            end
-            
-            soil_name = materials.soil_dictionary[material_idx]
-            soil = materials.soils[soil_name]
-            
-            # Get intrinsic permeability
-            k_intrinsic = soil.intrinsic_permeability
-
-            # Get nodal pressures
-            P_e = [P[nodes[i]] for i in 1:4]
-
-            # loop Gauss points
-            for p in 1:4
-                #Get shape functions at Gauss point
-                N_p = ShapeFunctions.shape_funcs.N[p]
-
-                # Get shape function derivatives in isoparametric coords
-                B = ShapeFunctions.get_B(p)
-
-                # Get inverse Jacobian
-                invJ = ShapeFunctions.get_invJ(e, p)
-
-                # Transform derivatives to physical coordinates
-                # dN/dx = B · J^-1
-                dN_dx = B * invJ  # [4 nodes, 2 coords]
-
-                #Evaluate pressure gradient at Gauss point
-                grad_P =  dN_dx' * P_e  # [2 coords] #needs to check signs
-
-                #Evaluate total concentration at Gauss point
-                C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
-
-                #Calculate concentration-weighted mean dynamic viscosity
-                μ_g_weighted = 0.0
-                if C_total_gp > 0.0
-                    for g in 1:NGases
-                        C_g_gp = N_p' * [C_g[nodes[i], g] for i in 1:4]
-                        gas_name = materials.gas_dictionary[g]
-                        μ_g_weighted += (C_g_gp / C_total_gp) * materials.gases[gas_name].dynamic_viscosity
-                    end
-                else
-                    # Fallback to simple mean if total concentration is zero
-                    μ_g_weighted = mean([materials.gases[materials.gas_dictionary[g]].dynamic_viscosity for g in 1:NGases])
-                end
-
-                #Calculate velocity at Gauss point using Darcy's law: v = - (k/μ) ∇P
-                v_gp = - (k_intrinsic / μ_g_weighted) * grad_P
-                
-                #Distribute velocity to nodes (simple averaging)
-                for i in 1:4
-                    node_id = nodes[i]
-                    v[node_id, :] += v_gp * N_p[i]
-                    # if P_boundary at node is fixed add velocity again at that node
-                    if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                        v[node_id, :] += v_gp * N_p[i]
-                    end
-                end
-
-                #consider velocity contribution from gravity
-                if calculate_gravity
-                    #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
-                    #get nodal densities
-                    ρ_g = zeros(4)
-                    for i in 1:4
-                        for g in 1:NGases
-                            gas_name = materials.gas_dictionary[g]
-                            gas = materials.gases[gas_name]
-                            ρ_g[i] += C_g[nodes[i], g] * gas.molar_mass
-                        end
-                    end
-                    ρ_g_gp = N_p' * ρ_g
-
-                    v_g_gp = - (k_intrinsic / μ_g_weighted) * ρ_g_gp * g_vector
-
-                    #Distribute gravitational velocity to nodes (simple averaging)
-                    for i in 1:4
-                        node_id = nodes[i]
-                        v[node_id, :] += v_g_gp * N_p[i]
-                        # if P_boundary at node is fixed add velocity again at that node
-                        if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                            v[node_id, :] += v_g_gp * N_p[i]
-                        end
-                    end
-                end
-            end
-        end
-
         
         # Update current time
         current_time += dt
@@ -807,9 +811,6 @@ function write_output_vtk(mesh, materials, step::Int, time::Float64, project_nam
     gas_names = materials.gas_dictionary   
     
     # Placeholder arrays for unused fields (filled with zeros for now)
-    reaction_rates = zeros(mesh.num_nodes)
-    co2_concentration = zeros(mesh.num_nodes)
-    caco3_concentration = zeros(mesh.num_nodes)
     degree_of_carbonation = zeros(mesh.num_nodes)
     volumetric_binder_content = zeros(mesh.num_nodes)
     
@@ -824,10 +825,9 @@ function write_output_vtk(mesh, materials, step::Int, time::Float64, project_nam
         total_concentration,
         P,
         dC_g_dt,
-        reaction_rates,
+        dC_lime_dt,
         C_lime,
-        co2_concentration,
-        caco3_concentration,
+        C_caco3,
         degree_of_carbonation,
         volumetric_binder_content,
         v,

@@ -104,8 +104,7 @@ function write_vtk_file(
     absolute_pressure::Vector{Float64},
     concentration_rates::Matrix{Float64},
     reaction_rates::Vector{Float64},
-    lime_concentration::Vector{Float64},
-    co2_concentration::Vector{Float64},
+    lime_concentration::Vector{Float64},    
     caco3_concentration::Vector{Float64},
     degree_of_carbonation::Vector{Float64},
     volumetric_binder_content::Vector{Float64},
@@ -140,7 +139,6 @@ function write_vtk_file(
         write_vtk_scalar_field(io, "Absolute_Pressure", absolute_pressure)
         write_vtk_scalar_field(io, "Reaction_Rate", reaction_rates)
         write_vtk_scalar_field(io, "Lime_Concentration", lime_concentration)
-        write_vtk_scalar_field(io, "CO2_Concentration", co2_concentration)
         write_vtk_scalar_field(io, "CaCO3_Concentration", caco3_concentration)
         write_vtk_scalar_field(io, "Degree_of_Carbonation", degree_of_carbonation)
         write_vtk_scalar_field(io, "Volumetric_Binder_Content", volumetric_binder_content)
