@@ -603,7 +603,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
             # calculate rate of change dC/dt = q_net / M
             @threads for i in 1:Nnodes                
-                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx] + q_pressure[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
+                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx] - q_pressure[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
                 if gas_name == "CO2" && calculate_reaction                    
                     #include reaction source/sink term
                     Aux= dC_g_dt[i, gas_idx] + ((q_source_sink[i] * P_boundary[i, gas_idx]) / M[i])
