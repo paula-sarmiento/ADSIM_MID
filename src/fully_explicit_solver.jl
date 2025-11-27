@@ -722,7 +722,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
         end
 
         #update dt to close exactly at next output time
-        if current_time + dt > next_output_time
+        if current_time+dt > next_output_time
             dt = next_output_time - current_time
             #activate switch to true
             save_data = true
