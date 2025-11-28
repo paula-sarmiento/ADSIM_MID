@@ -289,7 +289,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 soil = materials.soils[soil_name]
                 
                 # Calculate gas volume fraction θ_g = n - θ_w = n(1 - S_r)
-                θ_g = soil.porosity * (1.0 - soil.saturation)
+                θ_g = soil.porosity * (1.0 - soil.saturation)                
 
                 # Get soil tortuosity
                 τ = soil.granular_tortuosity
