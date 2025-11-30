@@ -1,0 +1,121 @@
+# Changelog
+
+All notable changes to ADSIM will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0] - 2025-11-30
+
+### Added
+
+#### Core Solver Features
+- Fully explicit finite element solver for advection-diffusion-reaction problems in porous media
+- Support for 2D and 3D unstructured meshes (triangular and tetrahedral elements)
+- Multi-gas transport simulation with individual gas species tracking
+- Advection, diffusion, and reaction kinetics modeling
+- Dynamic gas field implementation for spatially varying properties
+- Temperature-dependent transport properties
+- Adaptive time-stepping with CFL condition enforcement
+
+#### Reaction Modeling
+- First-order reaction kinetics
+- Carbonation reaction modeling (Ca(OH)₂ + CO₂ → CaCO₃)
+- Degree of carbonation tracking
+- Lime and calcium carbonate concentration tracking
+- Heat generation from exothermic reactions
+
+#### Input/Output
+- TOML-based input format for materials and calculation parameters
+- Custom mesh file format (.mesh) with boundary condition support
+- VTK output for visualization in ParaView
+- Comprehensive logging system with execution time tracking
+- Initial and boundary condition specifications
+
+#### GiD Problem Type
+- Full GiD integration for pre-processing
+- Interactive mesh generation interface
+- Material property editor
+- Calculation parameter configuration
+- Automated TOML and mesh file generation from GiD
+- Splash screen and about dialog
+
+#### Build System
+- PackageCompiler.jl integration for standalone executable generation
+- Automated build script (`build_app.jl`)
+- Cross-platform Julia dependencies management
+
+#### Version Management
+- Centralized VERSION file at project root
+- Automated version update script (`scripts/update_version.jl`)
+- Version display in log files, splash screen, and VTK output
+- `--version` command-line flag support
+
+#### Verification & Testing
+- Advection test case
+- Diffusion test case
+- Reaction test case
+- Multi-gas verification problem
+- Pani et al. benchmark problem
+
+#### Documentation
+- Comprehensive README with project overview
+- Materials TOML writing instructions
+- Mesh file writing instructions
+- Calculation parameters TOML instructions
+- Dynamic gas fields implementation guide
+- Fully explicit solver documentation
+- Time step module documentation
+- External assets guide
+- Python script for ParaView data extraction
+
+### Technical Details
+- **Language**: Julia 1.8+
+- **License**: MIT
+- **Author**: Luis E. Zambrano-Cruzatty
+- **Solver Type**: Fully explicit finite element method
+- **Element Types**: Linear triangular (2D), linear tetrahedral (3D)
+- **Shape Functions**: Implemented with local-to-global coordinate transformation
+
+### Known Limitations (Alpha Release)
+- Explicit time-stepping requires small time steps for stability
+- Limited to linear elements only
+- No adaptive mesh refinement
+- Windows executable only (Linux/macOS builds not yet automated)
+- GiD problem type requires GiD 15.0 or higher
+- Documentation still in progress for some advanced features
+
+### Dependencies
+- Julia >= 1.8
+- TOML.jl
+- Dates (Julia stdlib)
+- Printf (Julia stdlib)
+- PackageCompiler.jl (for building)
+
+---
+
+## Release Notes for v0.1.0
+
+This is the first alpha release of ADSIM (Advection-Diffusion for Soil Improvement and Modification). The software is functional for simulating gas transport and reaction in porous media but is still under active development.
+
+**What works:**
+- Core solver for multi-gas transport with reactions
+- GiD pre-processor integration
+- VTK output for ParaView visualization
+- Several validation test cases
+
+**What's in progress:**
+- User documentation and tutorials
+- Additional validation cases
+- Performance optimization
+- Multi-platform build automation
+
+**Feedback Welcome:**
+This is an alpha release intended for testing and feedback. Please report issues, bugs, or feature requests via GitHub Issues.
+
+---
+
+[Unreleased]: https://github.com/luisez1988/ADSIM/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/luisez1988/ADSIM/releases/tag/v0.1.0

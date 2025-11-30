@@ -4,7 +4,7 @@
 <Infoproblemtype version="0.0">
   <Program>
     <Name>ADSIM_2025</Name>
-    <Version>0.x.x</Version>   
+    <Version>0.1.0</Version>   
     <MinimumGiDVersion>14.1.8d</MinimumGiDVersion>
     <EnableDeprecated>0</EnableDeprecated>
     <CustomLibAutomatic>1</CustomLibAutomatic>

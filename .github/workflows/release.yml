@@ -1,0 +1,123 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v0.1.0, v1.0.0, etc.
+
+jobs:
+  build-windows:
+    name: Build Windows Executable
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.8'
+        
+    - name: Cache Julia packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.julia
+        key: ${{ runner.os }}-julia-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-julia-
+          
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Install PackageCompiler
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.add("PackageCompiler")'
+        
+    - name: Build standalone executable
+      run: |
+        julia --project=. build_app.jl
+        
+    - name: Verify build
+      run: |
+        if (Test-Path "ADSIM_app/bin/ADSIM.exe") {
+          Write-Host "✓ ADSIM.exe successfully built"
+          Get-ChildItem ADSIM_app/bin/ADSIM.exe | Select-Object Name, Length, LastWriteTime
+        } else {
+          Write-Error "Build failed - executable not found"
+          exit 1
+        }
+        
+    - name: Package Windows executable
+      run: |
+        $version = Get-Content VERSION
+        Compress-Archive -Path ADSIM_app/* -DestinationPath "ADSIM-v$version-windows-x64.zip"
+        
+    - name: Create release notes
+      id: release_notes
+      run: |
+        $version = Get-Content VERSION
+        $changelog = Get-Content CHANGELOG.md -Raw
+        # Extract release notes for current version
+        if ($changelog -match "(?s)## \[$version\].*?(?=## \[|\z)") {
+          $notes = $matches[0]
+          $notes | Out-File -FilePath release_notes.md
+        } else {
+          "Release v$version" | Out-File -FilePath release_notes.md
+        }
+        
+    - name: Upload executable artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: ADSIM-windows-x64
+        path: ADSIM-v*.zip
+        retention-days: 90
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ADSIM-v*.zip
+        body_path: release_notes.md
+        draft: false
+        prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload GiD problem type
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          Problemtype/ADSIM_2025.gid/**
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-info:
+    name: Build Information
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Display version info
+      run: |
+        echo "=== ADSIM Release Build ==="
+        echo "Version: $(cat VERSION)"
+        echo "Tag: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Author: ${{ github.actor }}"
+        echo "=========================="
+        
+    - name: Validate version consistency
+      run: |
+        VERSION=$(cat VERSION)
+        TAG_VERSION=${{ github.ref_name }}
+        TAG_VERSION=${TAG_VERSION#v}  # Remove 'v' prefix
+        
+        if [ "$VERSION" != "$TAG_VERSION" ]; then
+          echo "❌ ERROR: VERSION file ($VERSION) does not match tag ($TAG_VERSION)"
+          exit 1
+        else
+          echo "✓ Version consistency validated"
+        fi

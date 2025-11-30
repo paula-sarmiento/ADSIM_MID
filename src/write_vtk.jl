@@ -124,7 +124,7 @@ function write_vtk_file(
     open(output_file, "w") do io
         # Write VTK header
         println(io, "# vtk DataFile Version 3.0")
-        println(io, "ADSIM Simulation Results - Time Step $time_step, Time = $time")
+        println(io, "ADSIM v$(get_version()) - Time Step $time_step, Time = $time")
         println(io, "ASCII")
         println(io, "DATASET UNSTRUCTURED_GRID")
         

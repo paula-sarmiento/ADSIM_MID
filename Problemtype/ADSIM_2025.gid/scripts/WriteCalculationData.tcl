@@ -38,7 +38,7 @@ proc ADSIM::WriteCalculationData { filename } {
 #===============================================================================
 proc ADSIM::WriteCalculationHeader { } {
     GiD_WriteCalculationFile puts "# ADSIM calculation parameters file header (need to add disclaimer and license)"
-    GiD_WriteCalculationFile puts "# ADSIM_version = \"2025 v0.x.x\""
+    GiD_WriteCalculationFile puts "# ADSIM_version = \"2025 v0.1.0\""
     GiD_WriteCalculationFile puts "# File_created = \"[clock format [clock seconds] -format %Y-%m-%d]\""
     GiD_WriteCalculationFile puts ""
 }

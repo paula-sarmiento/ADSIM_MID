@@ -56,7 +56,7 @@ proc ADSIM::WriteMeshFile { filename } {
 #===============================================================================
 proc ADSIM::WriteMeshHeader { } {
     GiD_WriteCalculationFile puts "### ADSIM MESH FILE ###"
-    GiD_WriteCalculationFile puts "### Version: ADSIM_2025 ###"
+    GiD_WriteCalculationFile puts "### Version: ADSIM v0.1.0 ###"
     GiD_WriteCalculationFile puts ""
 }
 

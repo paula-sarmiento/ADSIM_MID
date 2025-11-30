@@ -5,7 +5,9 @@
   
   **Advection-Diffusion for Soil Improvement and Modification**
   
+  [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/luisez1988/ADSIM/releases)
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+  [![Julia](https://img.shields.io/badge/julia-1.8+-purple.svg)](https://julialang.org/)
   [![GiD](https://img.shields.io/badge/GiD-Problem%20Type-blue.svg)](https://www.gidsimulation.com/)
   
   *A powerful simulation tool for modeling advection-diffusion processes in soil systems with multi-gas transport capabilities*
@@ -33,25 +35,56 @@ ADSIM is a comprehensive finite element simulation framework designed for modeli
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Download Pre-built Executable (Recommended)
 
-- **GiD** (Pre/Post-processor)
-- **TCL** 8.5 or higher
-- Compatible finite element solver
+**Latest Release: v0.1.0** 🎉
 
-### Installation
+1. Download the latest Windows executable from the [Releases page](https://github.com/luisez1988/ADSIM/releases/latest)
+2. Extract the ZIP file to your desired location
+3. Run `ADSIM_app\bin\ADSIM.exe <project_name>` from the command line
+4. Example: `ADSIM.exe --version` to check installation
 
-1. Clone this repository:
+### Building from Source
+
+#### Prerequisites
+
+- **Julia** 1.8 or higher ([Download Julia](https://julialang.org/downloads/))
+- **GiD** (Pre/Post-processor) for mesh generation
+- **Git** for cloning the repository
+
+#### Installation Steps
+
+1. **Clone this repository:**
    ```bash
    git clone https://github.com/luisez1988/ADSIM.git
+   cd ADSIM
    ```
 
-2. Copy the `ADSIM_2025.gid` folder to your GiD problem types directory:
+2. **Install Julia dependencies:**
+   ```bash
+   julia --project=. -e 'using Pkg; Pkg.instantiate()'
+   ```
+
+3. **Run from source:**
+   ```bash
+   cd src
+   julia -t8 kernel.jl <project_name>
+   ```
+
+4. **(Optional) Build standalone executable:**
+   ```bash
+   julia build_app.jl
+   ```
+   This creates a self-contained executable in the `ADSIM_app/` folder.
+
+### GiD Problem Type Installation
+
+1. Copy the `Problemtype/ADSIM_2025.gid` folder to your GiD problem types directory:
    ```
    <GiD_Installation>/problemtypes/
    ```
 
-3. Restart GiD and select "ADSIM_2025" as your problem type
+2. Restart GiD and select "ADSIM_2025" as your problem type
 
 ---
 
@@ -147,6 +180,15 @@ The solver handles coupled processes including:
 
 ```
 ADSIM/
+├── src/                          # Julia source code
+│   ├── kernel.jl                 # Main execution kernel
+│   ├── ADSIM.jl                  # Module definition
+│   ├── version.jl                # Version management
+│   ├── fully_explicit_solver.jl  # Solver implementation
+│   ├── read_*.jl                 # Input file readers
+│   ├── write_vtk.jl              # VTK output writer
+│   ├── data/                     # Test cases and examples
+│   └── output/                   # Simulation results
 ├── Problemtype/
 │   ├── ADSIM_2025.gid/          # GiD problem type files
 │   │   ├── images/               # Icons and logos
@@ -154,9 +196,38 @@ ADSIM/
 │   │   ├── xml/                  # XML configuration files
 │   │   └── *.tcl, *.bat, *.spd  # Problem type definitions
 │   └── *.md                      # Documentation files
+├── scripts/
+│   └── update_version.jl         # Version update utility
+├── .github/
+│   └── workflows/                # CI/CD automation
+├── build_app.jl                  # Executable build script
+├── VERSION                       # Version file
+├── Project.toml                  # Julia package metadata
+├── CHANGELOG.md                  # Version history
 ├── LICENSE                       # MIT License
 └── README.md                     # This file
 ```
+
+---
+
+## 🔄 Releases and Versioning
+
+ADSIM follows [Semantic Versioning](https://semver.org/). Each release is tagged and includes:
+
+- **Compiled Windows executable** (standalone, no Julia installation required)
+- **Source code** (for building on other platforms)
+- **GiD problem type package**
+- **Release notes** with changelog
+
+### Current Release
+
+**Version 0.1.0** (Alpha) - First public release with core functionality
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed version history and [Releases](https://github.com/luisez1988/ADSIM/releases) for downloads.
+
+### Creating a New Release
+
+For maintainers, follow the [Release Template](.github/RELEASE_TEMPLATE.md) for the complete release process
 
 ---
 

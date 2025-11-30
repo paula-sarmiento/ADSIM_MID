@@ -1,7 +1,7 @@
 #______________________________________________________
 # ADSIM: Advection-Diffusion for Soil Improvement and 
 # Modification
-# v0.x.x
+# v0.1.0
 # Author: Luis Zambrano-Cruzatty
 #______________________________________________________
 
@@ -13,6 +13,9 @@
 # Load required packages
 using Dates
 using Printf
+
+# Load version information
+include("version.jl")
 
 # Include data reading modules
 include("read_mesh.jl")
@@ -40,12 +43,19 @@ Main execution function with comprehensive error handling.
 All errors are logged to the log file before exiting.
 """
 function main()
+    # Check for --version flag
+    if length(ARGS) > 0 && (ARGS[1] == "--version" || ARGS[1] == "-v")
+        println(get_version_string())
+        exit(0)
+    end
+
     # Check if project name is provided as command-line argument
     #For debugging only
     #ARGS = ["Advection_test"]
     if length(ARGS) < 1
         println("Error: No project name provided")
         println("Usage: julia kernel.jl <project_name>")
+        println("       julia kernel.jl --version")
         println("Example: julia kernel.jl Test")
         exit(1)
     end
@@ -98,6 +108,7 @@ function main()
 
         log_print("="^64)
         log_print("ADSIM: Advection-Diffusion for Soil Improvement and Modification")
+        log_print("Version: $(get_version())")
         log_print("="^64)
 
         # Step 1: Read mesh data

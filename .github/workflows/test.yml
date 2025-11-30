@@ -1,0 +1,148 @@
+name: CI Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test:
+    name: Julia ${{ matrix.julia-version }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.8', '1.9', '1.10']
+        os: [ubuntu-latest, windows-latest]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: ${{ matrix.julia-version }}
+        
+    - name: Cache Julia packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.julia
+        key: ${{ runner.os }}-julia-${{ matrix.julia-version }}-${{ hashFiles('**/Project.toml', '**/Manifest.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-julia-${{ matrix.julia-version }}-
+          ${{ runner.os }}-julia-
+          
+    - name: Install dependencies
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.instantiate()'
+        
+    - name: Run tests
+      run: |
+        julia --project=. -e 'using Pkg; Pkg.test()'
+        
+    - name: Run example problems (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        cd src
+        echo "Testing Advection problem..."
+        julia -t4 kernel.jl Advection_test
+        echo "Testing Diffusion problem..."
+        julia -t4 kernel.jl Diffusion_test
+        echo "Testing Reaction problem..."
+        julia -t4 kernel.jl Reaction_test
+        
+    - name: Run example problems (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        cd src
+        Write-Host "Testing Advection problem..."
+        julia -t4 kernel.jl Advection_test
+        Write-Host "Testing Diffusion problem..."
+        julia -t4 kernel.jl Diffusion_test
+        Write-Host "Testing Reaction problem..."
+        julia -t4 kernel.jl Reaction_test
+        
+    - name: Check output files
+      run: |
+        if (Test-Path "src/output/*.vtk") {
+          Write-Host "✓ VTK output files generated successfully"
+          Get-ChildItem src/output/*.vtk | Measure-Object | Select-Object -ExpandProperty Count
+        } else {
+          Write-Warning "No VTK files found"
+        }
+      shell: pwsh
+      
+  version-check:
+    name: Version Consistency Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check version consistency
+      run: |
+        echo "Checking version consistency across all files..."
+        VERSION=$(cat VERSION)
+        echo "VERSION file: $VERSION"
+        
+        # Check Project.toml
+        PROJ_VERSION=$(grep 'version = ' Project.toml | cut -d'"' -f2)
+        echo "Project.toml: $PROJ_VERSION"
+        
+        # Check if versions match
+        ERRORS=0
+        if [ "$VERSION" != "$PROJ_VERSION" ]; then
+          echo "❌ ERROR: VERSION and Project.toml mismatch"
+          ERRORS=$((ERRORS + 1))
+        fi
+        
+        # Check for v0.x.x placeholders
+        if grep -r "v0\.x\.x" --include="*.jl" --include="*.tcl" --include="*.xml" .; then
+          echo "❌ ERROR: Found unreplaced v0.x.x placeholders"
+          ERRORS=$((ERRORS + 1))
+        fi
+        
+        if [ $ERRORS -eq 0 ]; then
+          echo "✓ All version checks passed"
+        else
+          exit 1
+        fi
+        
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Julia
+      uses: julia-actions/setup-julia@v1
+      with:
+        version: '1.10'
+        
+    - name: Check Julia syntax
+      run: |
+        julia -e '
+        using Pkg
+        println("Checking Julia syntax...")
+        for (root, dirs, files) in walkdir("src")
+            for file in files
+                if endswith(file, ".jl")
+                    filepath = joinpath(root, file)
+                    try
+                        include_string(Main, "begin end", filepath)
+                        println("✓ $filepath")
+                    catch e
+                        println("❌ Syntax error in $filepath")
+                        println(e)
+                    end
+                end
+            end
+        end
+        '

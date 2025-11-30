@@ -2,7 +2,7 @@ proc InitGIDProject { dir } {
 
     global _dir
     set _dir $dir
-    set adsim_version "ADSIM v0.x.x"
+    set adsim_version "ADSIM v0.1.0"
     set GiDVersionRequired "14.0"
 
     ADSIM::SetDir $dir ;#store to use it later
