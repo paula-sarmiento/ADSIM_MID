@@ -206,6 +206,8 @@ function apply_pressure_bc!(mesh)
     # Apply nodal pressure boundary conditions
     for (node_id, pressure) in mesh.absolute_pressure_bc
         P[node_id] = pressure
+        # Restrict all gases at this node
+        #P_boundary[node_id, :] .= 0  # Mark node as having pressure BC
     end
 end
 

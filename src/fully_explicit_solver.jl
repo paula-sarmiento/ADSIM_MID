@@ -323,18 +323,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                         q_diffusion[node_id, gas_idx] +=  q_aux[i]
                     end
                 end
-                #______________________________________________________    
-
-                
-                #Apply total pressure boundary condition at nodes
-                for i in 1:4
-                    node_id = nodes[i]
-                    # Check if this node has a fixed pressure BC for this gas
-                    if has_pressure_bc(mesh, node_id)
-                        total_concentration[nodes[i]] = mesh.absolute_pressure_bc[node_id] / (R * T[node_id]) #Applied absolute pressure BC
-                    end
-                end
-
+                #______________________________________________________              
                 #Get total nodal concentrations
                 C_t= [total_concentration[nodes[i]] for i in 1:4]
 
@@ -520,15 +509,16 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                     C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
 
                     #Calculate concentration-weighted mean dynamic viscosity
+                    C_TOL = 1e-12  # Numerical tolerance
                     μ_g_weighted = 0.0
-                    if C_total_gp > 0.0
+                    if C_total_gp > C_TOL
                         for g in 1:NGases
                             C_g_gp = N_p' * [C_g[nodes[i], g] for i in 1:4]
                             gas_name = materials.gas_dictionary[g]
                             μ_g_weighted += (C_g_gp / C_total_gp) * materials.gases[gas_name].dynamic_viscosity
                         end
                     else
-                        # Fallback to simple mean if total concentration is zero
+                        # Fallback to simple mean if total concentration is negligible
                         μ_g_weighted = mean([materials.gases[materials.gas_dictionary[g]].dynamic_viscosity for g in 1:NGases])
                     end
 
@@ -537,15 +527,19 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                     
                     #Distribute velocity to nodes (simple averaging)
                     for i in 1:4
-                        node_id = nodes[i]
+                    node_id = nodes[i]
+                    v[node_id, :] += v_gp * N_p[i]
+                    # if P_boundary at node is fixed add velocity again at that node
+                    if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
                         v[node_id, :] += v_gp * N_p[i]
-                        # if P_boundary at node is fixed add velocity again at that node
-                        if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                            v[node_id, :] += v_gp * N_p[i]
-                        end
                     end
-
-                    #consider velocity contribution from gravity
+                    # Check if node id has absolute pressure BC
+                    if haskey(mesh.absolute_pressure_bc, node_id)
+                        v[node_id, :] += v_gp * N_p[i]
+                    end
+                    
+                end                    
+                #consider velocity contribution from gravity
                     if calculate_gravity
                         #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
                         #get nodal densities
@@ -579,7 +573,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
             # Calculate boundary advective fluxes (Equation 46)
             # q_BC = ∑_e 0.5 * l_e * C_g * v* · n̂
             #______________________________________________________
-            if calculate_advection
+            if calculate_advection           
+                
                 # Loop over all precomputed boundary edges
                 for (elem_id, node_i, node_j, l_e, n_hat) in boundary_edges
                     # Loop over both nodes on the edge
@@ -603,7 +598,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
             # calculate rate of change dC/dt = q_net / M
             @threads for i in 1:Nnodes                
-                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx] - q_pressure[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
+                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx]- q_pressure[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
+
                 if gas_name == "CO2" && calculate_reaction                    
                     #include reaction source/sink term
                     Aux= dC_g_dt[i, gas_idx] + ((q_source_sink[i] * P_boundary[i, gas_idx]) / M[i])
@@ -637,12 +633,21 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
             for i in 1:Nnodes
                 C_g[i, gas_idx] += dt * dC_g_dt[i, gas_idx]
                 
-                # Ensure non-negative concentrations
-                if C_g[i, gas_idx] < 0.0
+                # Ensure non-negative and numerically stable concentrations
+                C_MIN = 1e-12
+                if C_g[i, gas_idx] < C_MIN
                     C_g[i, gas_idx] = 0.0
-                    # print warning in log_file
-                    log_print("Warning: Negative concentration detected at node $i for gas $gas_name. Setting to zero.")
+                    if C_g[i, gas_idx] < 0.0  # Only warn for actually negative values
+                        log_print("Warning: Negative concentration detected at node $i for gas $gas_name. Setting to zero.")
+                    end
                 end
+            end
+
+            # Debug: Check for NaN values
+            if any(isnan.(C_g[:, gas_idx]))
+                nan_nodes = findall(isnan.(C_g[:, gas_idx]))
+                log_print("ERROR: NaN detected in gas $gas_name at step $step, nodes: $nan_nodes")
+                error("Simulation failed due to NaN values")
             end
 
         end
@@ -723,6 +728,12 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
         
         # Calculate total gas concentrations after all gases are updated
         total_concentration = vec(sum(C_g, dims=2))
+
+        #Apply total pressure boundary condition at nodes
+        for node_id in keys(mesh.absolute_pressure_bc)
+            # Apply fixed absolute pressure BC by setting total concentration
+            total_concentration[node_id] = mesh.absolute_pressure_bc[node_id] / (R * T[node_id])
+        end
 
         #Update pressure using ideal gas law
         P= total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
@@ -807,4 +818,3 @@ function write_output_vtk(mesh, materials, step::Int, time::Float64, project_nam
         dT_dt
     )
 end
-   
