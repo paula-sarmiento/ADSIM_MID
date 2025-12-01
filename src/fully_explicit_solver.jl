@@ -121,7 +121,7 @@ function assemble_element_stiffness_matrices(mesh)
     K_elements = Vector{Matrix{Float64}}(undef, Nelements)
     
     # Loop over all elements
-    for e in 1:Nelements
+    @threads for e in 1:Nelements
         # Element stiffness matrix [4×4]
         K_e = zeros(4, 4)
         

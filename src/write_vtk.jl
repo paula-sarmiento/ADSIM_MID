@@ -163,7 +163,7 @@ function write_vtk_file(
         write_vtk_vector_field(io, "Gas_Seepage_Velocity", gas_seepage_velocity, ndim)
     end
     
-    println("Wrote VTK file: $output_file")
+    println("      Wrote VTK file: $output_file")
     return nothing
 end
 
