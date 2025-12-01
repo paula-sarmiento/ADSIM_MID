@@ -14,7 +14,9 @@ Note: This module requires read_mesh.jl to be included first to access the MeshD
 
 module WriteVTK
 
-export write_vtk_file
+using ..ADSIMVersion: get_version
+
+export write_vtk_file, write_vtk_series
 
 """
     write_vtk_file(

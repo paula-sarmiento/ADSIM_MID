@@ -1,7 +1,10 @@
 #______________________________________________________
 # ADSIM Version Module
 # Provides centralized version management
+# Version: 0.1.0
 #______________________________________________________
+
+module ADSIMVersion
 
 """
     get_version()
@@ -30,3 +33,5 @@ function get_version_string()
 end
 
 export get_version, get_version_string
+
+end # module

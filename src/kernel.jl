@@ -16,6 +16,7 @@ using Printf
 
 # Load version information
 include("version.jl")
+using .ADSIMVersion: get_version
 
 # Include data reading modules
 include("read_mesh.jl")
@@ -214,6 +215,14 @@ function main()
             close(log_file)
         end
     end
+end
+
+function print_banner()
+    println("\n" * "="^70)
+    println(" "^20 * "ADSIM - Adsorption Simulator")
+    println(" "^25 * "Version: $(get_version())")
+    println(" "^15 * "Advanced Modeling of Adsorption Processes")
+    println("="^70 * "\n")
 end
 
 # Execute main function when script is run directly

@@ -138,3 +138,17 @@ In ADSIM the variable `shape_functions.N(p)` should return the shape functions e
 Similarly, the derivatives of the shape function can be determined as `shape_functions.B(p)`.
 
 Finally, the inverse of the Jacobian must be calculated at the element level. These are calculated during the initialization phase of ADSIM only once and stored at the element level in `shape_functions.invJ(IElm, p)` as well as `shape_functions.detJ(IElm, p)` for the determinant.
+
+# Constant pressure boundary conditions
+
+The constant pressure boundary condition requires that all concentrations in the boundary satisfy:
+
+$$\sum_i C_i= C_t $$
+
+We can express this condition as a function of the gas fractions:
+
+$$\sum_i x_i C_t= C_t$$
+
+In other words:
+
+$$\sum_i x_i= 1$$
