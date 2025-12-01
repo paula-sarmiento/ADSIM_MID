@@ -31,7 +31,6 @@ mutable struct MeshData
     concentration_bc::Dict{Int, Vector{Float64}}
     uniform_flow_bc::Dict{Int, Vector{Float64}}
     absolute_pressure_bc::Dict{Int, Float64}
-    # vacating_gas_bc::Dict{Int, Int}
     initial_concentrations::Dict{Int, Vector{Float64}}
     initial_temperature::Dict{Int, Float64}
     materials::Dict{Int, Int}
@@ -42,11 +41,30 @@ mutable struct MeshData
             zeros(Int, 0, 0),
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Vector{Float64}}(),
-            Dict{Int, Float64}(),
-            # Dict{Int, Int}(),
+            Dict{Int, Float64}(),            
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
             Dict{Int, Int}())
+    end
+end
+
+
+"""
+BoundaryNodeInfluence
+
+Structure to store boundary node information with influence lengths.
+
+# Fields
+- `node_influences::Dict{Int, Float64}`: Dictionary mapping node_id => total_influence_length [m]
+
+The influence length represents the portion of boundary edges contributing to each node.
+For edges where both nodes have pressure BC, each node receives half the edge length.
+"""
+struct BoundaryNodeInfluence
+    node_influences::Dict{Int, Float64}
+    
+    function BoundaryNodeInfluence()
+        new(Dict{Int, Float64}())
     end
 end
 
@@ -719,7 +737,99 @@ function identify_boundary_edges(mesh::MeshData)
 end
 
 
+"""
+    get_boundary_node_influences(mesh::MeshData) -> BoundaryNodeInfluence
+
+Calculate the influence length for each node on pressure boundary edges.
+
+For each boundary edge where both nodes have pressure boundary conditions,
+the edge length is distributed equally between the two nodes (each gets l_e/2).
+If a node appears on multiple boundary edges, the influence lengths are accumulated.
+
+# Arguments
+- `mesh::MeshData`: The mesh data structure
+
+# Returns
+- `BoundaryNodeInfluence`: Structure containing a dictionary that maps node_id => total_influence_length [m]
+
+# Algorithm
+1. Extract all nodes with pressure BCs from `mesh.absolute_pressure_bc`
+2. For each pressure BC node, find all connected elements
+3. Check each element edge: if both nodes have pressure BC, it's a boundary edge
+4. Calculate edge length and distribute half to each node
+5. Accumulate influence lengths for nodes appearing on multiple edges
+
+# Example
+```julia
+mesh = read_mesh_file("mesh.mesh")
+node_influences = get_boundary_node_influences(mesh)
+
+# Access influence length for a specific node
+for (node_id, influence_length) in node_influences.node_influences
+    println("Node \$node_id has influence length: \$influence_length m")
+end
+```
+"""
+function get_boundary_node_influences(mesh::MeshData)
+    # Initialize the result structure
+    influences = BoundaryNodeInfluence()
+    
+    # Use a Set to avoid processing duplicate edges
+    processed_edges = Set{Tuple{Int, Int}}()  # (min_node, max_node)
+    
+    # Get all nodes with pressure boundary conditions
+    pressure_bc_nodes = keys(mesh.absolute_pressure_bc)
+    
+    # For each pressure BC node, examine connected elements
+    for node_id in pressure_bc_nodes
+        # Get all elements containing this node
+        connected_elements = get_node_elements(mesh, node_id)
+        
+        # Check each connected element for boundary edges
+        for elem_id in connected_elements
+            elem_nodes = mesh.elements[elem_id, :]
+            
+            # Check all 4 edges of the quadrilateral element
+            for i in 1:4
+                j = (i % 4) + 1  # Next node in sequence (wraps around)
+                
+                local_node_i = elem_nodes[i]
+                local_node_j = elem_nodes[j]
+                
+                # Check if both nodes have pressure BC
+                if has_pressure_bc(mesh, local_node_i) && has_pressure_bc(mesh, local_node_j)
+                    # Create normalized edge identifier to avoid duplicates
+                    min_node = min(local_node_i, local_node_j)
+                    max_node = max(local_node_i, local_node_j)
+                    edge_key = (min_node, max_node)
+                    
+                    # Only process each edge once
+                    if !(edge_key in processed_edges)
+                        push!(processed_edges, edge_key)
+                        
+                        # Calculate edge length
+                        l_e, _ = calculate_edge_outward_normal(mesh, local_node_i, local_node_j)
+                        
+                        # Distribute half the edge length to each node
+                        half_length = l_e / 2.0
+                        
+                        # Accumulate influence length for each node
+                        influences.node_influences[local_node_i] = 
+                            get(influences.node_influences, local_node_i, 0.0) + half_length
+                        influences.node_influences[local_node_j] = 
+                            get(influences.node_influences, local_node_j, 0.0) + half_length
+                    end
+                end
+            end
+        end
+    end
+    
+    return influences
+end
+
+
 # Export all public functions and types
 export MeshData, read_mesh_file, get_element_nodes, get_node_coordinates
 export get_element_material, get_node_elements, has_pressure_bc
-export calculate_edge_outward_normal, identify_boundary_edges
+export calculate_edge_outward_normal, BoundaryNodeInfluence, get_boundary_node_influences
+export identify_boundary_edges

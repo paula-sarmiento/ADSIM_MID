@@ -23,6 +23,10 @@ global P::Vector{Float64} = Float64[]
 global T::Vector{Float64} = Float64[]
 global v::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global P_boundary::Matrix{Int} = Matrix{Int}(undef, 0, 0)
+global λ_bc::Vector{Float64} = Float64[]
+
+# Boundary node influence lengths
+global boundary_node_influences::Dict{Int, Float64} = Dict{Int, Float64}()
 
 # Reactive species
 global C_lime::Vector{Float64} = Float64[]
@@ -55,7 +59,7 @@ The exclamation mark indicates it modifies global variables.
 """
 function zero_variables!(mesh, materials)
     global NDim, Nnodes, Nelements, NSoils, NGases
-    global C_g, P, T, v, P_boundary
+    global C_g, P, T, v, P_boundary, λ_bc, boundary_node_influences
     global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt
     
@@ -72,6 +76,11 @@ function zero_variables!(mesh, materials)
     T = zeros(Float64, Nnodes)
     v = zeros(Float64, Nnodes, NDim)
     P_boundary = ones(Int, Nnodes, NGases)  # 1 = free node, 0 = concentration BC node
+    λ_bc = zeros(Float64, Nnodes)  # Lagrange multipliers for pressure BCs
+    
+    # Calculate and store boundary node influence lengths
+    boundary_influences = get_boundary_node_influences(mesh)
+    boundary_node_influences = boundary_influences.node_influences
     
     # Allocate and initialize reactive species
     C_lime = zeros(Float64, Nnodes)
@@ -205,7 +214,7 @@ function apply_pressure_bc!(mesh)
     
     # Apply nodal pressure boundary conditions
     for (node_id, pressure) in mesh.absolute_pressure_bc
-        P[node_id] = pressure
+        P[node_id] = pressure         
         # Restrict all gases at this node
         #P_boundary[node_id, :] .= 0  # Mark node as having pressure BC
     end

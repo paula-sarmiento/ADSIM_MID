@@ -190,6 +190,13 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     log_print("\n[8/8] Starting fully explicit diffusion solver")
     log_print("   Using $(Threads.nthreads()) threads for parallel execution")
 
+    # Access global variables
+    global C_g, P, T, v, P_boundary, λ_bc
+    global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
+    global dC_g_dt, dT_dt, dC_lime_dt
+    global boundary_node_influences
+    global q_boundary
+
     # Universal gas constant [J/(mol·K)]
     R = 8.314
     M_caco3= 100.09 #g/mol
@@ -246,9 +253,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     #Calculate total gas concentrations
     total_concentration = vec(sum(C_g, dims=2))
 
-    #Calculate the absolute pressure 
-    global P 
-    P= total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
+    #Calculate the absolute pressure
+    P = total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
 
     
     # Write initial state (t = 0)
@@ -263,11 +269,11 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     # Main time stepping loop
     save_data = false
     for step in 1:num_steps
-        #reset flow vectors
+        #reset flow vectors (q_boundary is prefilled and not reset here)
         q_diffusion = zeros(Float64, Nnodes, NGases)
         q_advection = zeros(Float64, Nnodes, NGases)
         q_gravitational = zeros(Float64, Nnodes, NGases)
-        q_pressure = zeros(Float64, Nnodes, NGases)  # Boundary advective flux from pressure BCs
+        total_rate = zeros(Float64, Nnodes)  # Boundary rate of change
         q_source_sink= zeros(Float64, Nnodes) # Only for CO2 for now
 
         # Loop over all gases
@@ -459,146 +465,9 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
             end # flux are ready for this gas
 
-            #Calculate nodal gas velocities using Darcy's law
-            #zero the velocity vector
-            global v
-            v .= 0.0
-
-            #loop over elements
-            for e in 1:Nelements
-                # Get element nodes
-                nodes = mesh.elements[e, :]
-
-                #print elements in log for debugging
-                #log_print("Element $e nodes: $(nodes)")
-
-                # Get material properties for this element
-                material_idx = get_element_material(mesh, e)
-                if material_idx === nothing # No material assigned
-                    error("Element $e has no material assigned. Check mesh material definitions.")
-                end
-                
-                soil_name = materials.soil_dictionary[material_idx]
-                soil = materials.soils[soil_name]
-                
-                # Get intrinsic permeability
-                k_intrinsic = soil.intrinsic_permeability
-
-                # Get nodal pressures
-                P_e = [P[nodes[i]] for i in 1:4]
-
-                # loop Gauss points
-                for p in 1:4
-                    #Get shape functions at Gauss point
-                    N_p = ShapeFunctions.shape_funcs.N[p]
-
-                    # Get shape function derivatives in isoparametric coords
-                    B = ShapeFunctions.get_B(p)
-
-                    # Get inverse Jacobian
-                    invJ = ShapeFunctions.get_invJ(e, p)
-
-                    # Transform derivatives to physical coordinates
-                    # dN/dx = B · J^-1
-                    dN_dx = B * invJ  # [4 nodes, 2 coords]
-
-                    #Evaluate pressure gradient at Gauss point
-                    grad_P =  dN_dx' * P_e  # [2 coords] #needs to check signs
-
-                    #Evaluate total concentration at Gauss point
-                    C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
-
-                    #Calculate concentration-weighted mean dynamic viscosity
-                    C_TOL = 1e-12  # Numerical tolerance
-                    μ_g_weighted = 0.0
-                    if C_total_gp > C_TOL
-                        for g in 1:NGases
-                            C_g_gp = N_p' * [C_g[nodes[i], g] for i in 1:4]
-                            gas_name = materials.gas_dictionary[g]
-                            μ_g_weighted += (C_g_gp / C_total_gp) * materials.gases[gas_name].dynamic_viscosity
-                        end
-                    else
-                        # Fallback to simple mean if total concentration is negligible
-                        μ_g_weighted = mean([materials.gases[materials.gas_dictionary[g]].dynamic_viscosity for g in 1:NGases])
-                    end
-
-                    #Calculate velocity at Gauss point using Darcy's law: v = - (k/μ) ∇P
-                    v_gp = - (k_intrinsic / μ_g_weighted) * grad_P
-                    
-                    #Distribute velocity to nodes (simple averaging)
-                    for i in 1:4
-                    node_id = nodes[i]
-                    v[node_id, :] += v_gp * N_p[i]
-                    # if P_boundary at node is fixed add velocity again at that node
-                    if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                        v[node_id, :] += v_gp * N_p[i]
-                    end
-                    # Check if node id has absolute pressure BC
-                    if haskey(mesh.absolute_pressure_bc, node_id)
-                        v[node_id, :] += v_gp * N_p[i]
-                    end
-                    
-                end                    
-                #consider velocity contribution from gravity
-                    if calculate_gravity
-                        #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
-                        #get nodal densities
-                        ρ_g = zeros(4)
-                        for i in 1:4
-                            for g in 1:NGases
-                                gas_name = materials.gas_dictionary[g]
-                                gas = materials.gases[gas_name]
-                                ρ_g[i] += C_g[nodes[i], g] * gas.molar_mass
-                            end
-                        end
-                        ρ_g_gp = N_p' * ρ_g
-
-                        v_g_gp = - (k_intrinsic / μ_g_weighted) * ρ_g_gp * g_vector
-
-                        #Distribute gravitational velocity to nodes (simple averaging)
-                        for i in 1:4
-                            node_id = nodes[i]
-                            v[node_id, :] += v_g_gp * N_p[i]
-                            # if P_boundary at node is fixed add velocity again at that node
-                            if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                                v[node_id, :] += v_g_gp * N_p[i]
-                            end
-                        end
-                    end
-                end
-            end
-            
-
-            #______________________________________________________
-            # Calculate boundary advective fluxes (Equation 46)
-            # q_BC = ∑_e 0.5 * l_e * C_g * v* · n̂
-            #______________________________________________________
-            if calculate_advection           
-                
-                # Loop over all precomputed boundary edges
-                for (elem_id, node_i, node_j, l_e, n_hat) in boundary_edges
-                    # Loop over both nodes on the edge
-                    for node_id in (node_i, node_j)
-                        # Get concentration and velocity at node
-                        C_g_node = C_g[node_id, gas_idx]
-                        v_node = v[node_id, :]  # [v_x, v_y]
-                        
-                        # Calculate normal velocity component: v* · n̂
-                        v_dot_n = dot(v_node, n_hat)
-                        
-                        # Calculate flux at node: q = 0.5 * l_e * C * (v · n)
-                        # Positive flux = outflow (leaving domain)
-                        q_bc = 0.5 * l_e * C_g_node * v_dot_n
-                        
-                        # Add to pressure boundary flux
-                        q_pressure[node_id, gas_idx] += q_bc
-                    end
-                end
-            end
-
             # calculate rate of change dC/dt = q_net / M
             @threads for i in 1:Nnodes                
-                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx]- q_pressure[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
+                dC_g_dt[i, gas_idx] = ((q_boundary[i, gas_idx] - q_diffusion[i, gas_idx] - q_advection[i, gas_idx] - q_gravitational[i, gas_idx]) * P_boundary[i, gas_idx]) / M[i]
 
                 if gas_name == "CO2" && calculate_reaction                    
                     #include reaction source/sink term
@@ -609,37 +478,56 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                     end
                 end
             end
+        end # end gas loop
 
-            # Update reaction kinetic terms for lime concentration
-            if calculate_reaction
-                for i in 1:Nnodes
-                    C_lime[i] += dt * dC_lime_dt[i]
-                    # Ensure non-negative lime concentrations
-                    if C_lime[i] < 0.0
-                        C_lime[i] = 0.0
-                        # print warning in log_file
-                        log_print("Warning: Negative lime concentration detected at node $i. Setting to zero.")
-                    end
-                    #Update caco3_concentration
-                    C_caco3[i] += dt * (- dC_lime_dt[i])
-                    #calculate binder content β_b= V_caco3/V_total
-                    binder_content[i]= C_caco3[i] * M_caco3 / ρ_caco3
-                    #calculate degree of carbonation DoC= C_caco3/C_caco3_max
-                    degree_of_carbonation[i] = C_caco3[i] / Caco3_max[i]
-                end
+        # Calculate total rate of concentration change (outside threaded loop to avoid race conditions)
+        for i in 1:Nnodes
+            for gas_idx in 1:NGases
+                total_rate[i] += dC_g_dt[i, gas_idx]
             end
+        end
 
+        #______________________________________________________
+        # Calculate Lagrangian multipliers to enforce total concentration BCs
+        #______________________________________________________
+        
+        # Convert keys to vector for thread-safe iteration
+        pressure_bc_nodes = collect(keys(mesh.absolute_pressure_bc))
+        
+        # Loop over all boundary nodes with prescribed pressure BC
+        @threads for j in pressure_bc_nodes
+            # Check if node has influence length (should be in boundary_node_influences)
+            if haskey(boundary_node_influences, j)
+                le = boundary_node_influences[j] #length of influence
+                C_rate_imposed = 0.0 #placeholder for imposed rate will change if a transient pressure is applied
+                λ_bc[j] = 3 * M[j] * (total_rate[j] - C_rate_imposed) / (le * NGases)  # Lagrangian multiplier for node j                
+            else
+                λ_bc[j] = 0.0  # No influence length found, set multiplier to zero
+            end
+        end
+
+        #Loop gases again to apply Lagrangian correction and update concentrations
+        @threads for gas_idx in 1:NGases
+            # Get gas name for warnings
+            gas_name = materials.gas_dictionary[gas_idx]
+            
             # Update concentrations: C^(n+1) = C^n + dt * dC/dt
             for i in 1:Nnodes
-                C_g[i, gas_idx] += dt * dC_g_dt[i, gas_idx]
+                # Apply Lagrangian correction only at nodes with boundary influence
+                lagrangian_correction = 0.0
+                if haskey(boundary_node_influences, i) && haskey(mesh.absolute_pressure_bc, i)
+                    lagrangian_correction = 0.3333333333333333 * λ_bc[i] * boundary_node_influences[i] / M[i]                    
+                end
+                
+                C_g[i, gas_idx] += dt * (dC_g_dt[i, gas_idx] - lagrangian_correction)
                 
                 # Ensure non-negative and numerically stable concentrations
                 C_MIN = 1e-12
                 if C_g[i, gas_idx] < C_MIN
-                    C_g[i, gas_idx] = 0.0
                     if C_g[i, gas_idx] < 0.0  # Only warn for actually negative values
                         log_print("Warning: Negative concentration detected at node $i for gas $gas_name. Setting to zero.")
                     end
+                    C_g[i, gas_idx] = 0.0
                 end
             end
 
@@ -649,7 +537,133 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 log_print("ERROR: NaN detected in gas $gas_name at step $step, nodes: $nan_nodes")
                 error("Simulation failed due to NaN values")
             end
+        end
+        
+        #Calculate nodal gas velocities using Darcy's law
+        #zero the velocity vector
+        v .= 0.0
 
+        #loop over elements
+        for e in 1:Nelements
+            # Get element nodes
+            nodes = mesh.elements[e, :]
+
+            #print elements in log for debugging
+            #log_print("Element $e nodes: $(nodes)")
+
+            # Get material properties for this element
+            material_idx = get_element_material(mesh, e)
+            if material_idx === nothing # No material assigned
+                error("Element $e has no material assigned. Check mesh material definitions.")
+            end
+            
+            soil_name = materials.soil_dictionary[material_idx]
+            soil = materials.soils[soil_name]
+            
+            # Get intrinsic permeability
+            k_intrinsic = soil.intrinsic_permeability
+
+            # Get nodal pressures
+            P_e = [P[nodes[i]] for i in 1:4]
+
+            # loop Gauss points
+            for p in 1:4
+                #Get shape functions at Gauss point
+                N_p = ShapeFunctions.shape_funcs.N[p]
+
+                # Get shape function derivatives in isoparametric coords
+                B = ShapeFunctions.get_B(p)
+
+                # Get inverse Jacobian
+                invJ = ShapeFunctions.get_invJ(e, p)
+
+                # Transform derivatives to physical coordinates
+                # dN/dx = B · J^-1
+                dN_dx = B * invJ  # [4 nodes, 2 coords]
+
+                #Evaluate pressure gradient at Gauss point
+                grad_P =  dN_dx' * P_e  # [2 coords] #needs to check signs
+
+                #Evaluate total concentration at Gauss point
+                C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
+
+                #Calculate concentration-weighted mean dynamic viscosity
+                C_TOL = 1e-12  # Numerical tolerance
+                μ_g_weighted = 0.0
+                if C_total_gp > C_TOL
+                    for g in 1:NGases
+                        C_g_gp = N_p' * [C_g[nodes[i], g] for i in 1:4]
+                        gas_name = materials.gas_dictionary[g]
+                        μ_g_weighted += (C_g_gp / C_total_gp) * materials.gases[gas_name].dynamic_viscosity
+                    end
+                else
+                    # Fallback to simple mean if total concentration is negligible
+                    μ_g_weighted = mean([materials.gases[materials.gas_dictionary[g]].dynamic_viscosity for g in 1:NGases])
+                end
+
+                #Calculate velocity at Gauss point using Darcy's law: v = - (k/μ) ∇P
+                v_gp = - (k_intrinsic / μ_g_weighted) * grad_P
+                
+                #Distribute velocity to nodes (simple averaging)
+                for i in 1:4
+                node_id = nodes[i]
+                v[node_id, :] += v_gp * N_p[i]
+                # if P_boundary at node is fixed add velocity again at that node
+                if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
+                    v[node_id, :] += v_gp * N_p[i]
+                end
+                # Check if node id has absolute pressure BC
+                if haskey(mesh.absolute_pressure_bc, node_id)
+                    v[node_id, :] += v_gp * N_p[i]
+                end
+                
+            end                    
+            #consider velocity contribution from gravity
+                if calculate_gravity
+                    #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
+                    #get nodal densities
+                    ρ_g = zeros(4)
+                    for i in 1:4
+                        for g in 1:NGases
+                            gas_name = materials.gas_dictionary[g]
+                            gas = materials.gases[gas_name]
+                            ρ_g[i] += C_g[nodes[i], g] * gas.molar_mass
+                        end
+                    end
+                    ρ_g_gp = N_p' * ρ_g
+
+                    v_g_gp = - (k_intrinsic / μ_g_weighted) * ρ_g_gp * g_vector
+
+                    #Distribute gravitational velocity to nodes (simple averaging)
+                    for i in 1:4
+                        node_id = nodes[i]
+                        v[node_id, :] += v_g_gp * N_p[i]
+                        # if P_boundary at node is fixed add velocity again at that node
+                        if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
+                            v[node_id, :] += v_g_gp * N_p[i]
+                        end
+                    end
+                end
+            end
+        end
+
+        # Update reaction kinetic terms for lime concentration
+        if calculate_reaction
+            for i in 1:Nnodes
+                C_lime[i] += dt * dC_lime_dt[i]
+                # Ensure non-negative lime concentrations
+                if C_lime[i] < 0.0
+                    C_lime[i] = 0.0
+                    # print warning in log_file
+                    log_print("Warning: Negative lime concentration detected at node $i. Setting to zero.")
+                end
+                #Update caco3_concentration
+                C_caco3[i] += dt * (- dC_lime_dt[i])
+                #calculate binder content β_b= V_caco3/V_total
+                binder_content[i]= C_caco3[i] * M_caco3 / ρ_caco3
+                #calculate degree of carbonation DoC= C_caco3/C_caco3_max
+                degree_of_carbonation[i] = C_caco3[i] / Caco3_max[i]
+            end
         end
 
         # Calculate temperature change due to reaction (after all gas fluxes are calculated)
