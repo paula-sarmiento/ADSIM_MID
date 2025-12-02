@@ -557,9 +557,6 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
             # Get element nodes
             nodes = mesh.elements[e, :]
 
-            #print elements in log for debugging
-            #log_print("Element $e nodes: $(nodes)")
-
             # Get material properties for this element
             material_idx = get_element_material(mesh, e)
             if material_idx === nothing # No material assigned
@@ -583,15 +580,18 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 # Get shape function derivatives in isoparametric coords
                 B = ShapeFunctions.get_B(p)
 
-                # Get inverse Jacobian
+                # Get inverse Jacobian and determinant
                 invJ = ShapeFunctions.get_invJ(e, p)
+                detJ = ShapeFunctions.get_detJ(e, p)
+                
+                # Gauss weight
+                w = ShapeFunctions.shape_funcs.gauss_weights[p]
 
                 # Transform derivatives to physical coordinates
-                # dN/dx = B · J^-1
                 dN_dx = B * invJ  # [4 nodes, 2 coords]
 
                 #Evaluate pressure gradient at Gauss point
-                grad_P =  dN_dx' * P_e  # [2 coords] #needs to check signs
+                grad_P = dN_dx' * P_e  # [2 coords]
 
                 #Evaluate total concentration at Gauss point
                 C_total_gp = N_p' * [total_concentration[nodes[i]] for i in 1:4]
@@ -613,24 +613,20 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                 #Calculate velocity at Gauss point using Darcy's law: v = - (k/μ) ∇P
                 v_gp = - (k_intrinsic / μ_g_weighted) * grad_P
                 
-                #Distribute velocity to nodes (simple averaging)
+                # Calculate mass weight at this Gauss point
+                # Get gas volume fraction for this element
+                θ_g = soil.porosity * (1.0 - soil.saturation)
+                mass_weight = θ_g * w * detJ
+                
+                #Distribute mass-weighted velocity to nodes
                 for i in 1:4
-                node_id = nodes[i]
-                v[node_id, :] += v_gp * N_p[i]
-                # if P_boundary at node is fixed add velocity again at that node
-                if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                    v[node_id, :] += v_gp * N_p[i]
-                end
-                # Check if node id has absolute pressure BC
-                if haskey(mesh.absolute_pressure_bc, node_id)
-                    v[node_id, :] += v_gp * N_p[i]
+                    node_id = nodes[i]
+                    v[node_id, :] += v_gp * N_p[i] * mass_weight
                 end
                 
-            end                    
-            #consider velocity contribution from gravity
+                #consider velocity contribution from gravity
                 if calculate_gravity
-                    #Calculate gravitational velocity at Gauss point using Darcy's law: v_g = - (k/μ) ρ_g g
-                    #get nodal densities
+                    #Calculate gravitational velocity at Gauss point
                     ρ_g = zeros(4)
                     for i in 1:4
                         for g in 1:NGases
@@ -643,16 +639,19 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
 
                     v_g_gp = - (k_intrinsic / μ_g_weighted) * ρ_g_gp * g_vector
 
-                    #Distribute gravitational velocity to nodes (simple averaging)
+                    #Distribute mass-weighted gravitational velocity to nodes
                     for i in 1:4
                         node_id = nodes[i]
-                        v[node_id, :] += v_g_gp * N_p[i]
-                        # if P_boundary at node is fixed add velocity again at that node
-                        if P_boundary[node_id, 1] == 0.0 #assuming all gases have same BC for pressure
-                            v[node_id, :] += v_g_gp * N_p[i]
-                        end
+                        v[node_id, :] += v_g_gp * N_p[i] * mass_weight
                     end
                 end
+            end
+        end
+        
+        # Divide accumulated velocities by nodal mass to get average velocity
+        for i in 1:Nnodes
+            if M[i] > 0.0
+                v[i, :] ./= M[i]
             end
         end
 
