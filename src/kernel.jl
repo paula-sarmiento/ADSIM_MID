@@ -29,6 +29,7 @@ include("shape_functions.jl")
 include("write_vtk.jl")
 include("fully_explicit_solver.jl")
 include("write_checkpoint.jl")
+include("read_checkpoint.jl")
 
 using .ShapeFunctions
 using .WriteVTK
@@ -167,17 +168,69 @@ function main()
             log_print("   ✓ CO2 gas is defined in materials")
         end
 
+        # Step 3.6: Check for existing checkpoint from previous stage
+        checkpoint_file, prev_stage = find_latest_checkpoint(project_name, output_dir)
+        checkpoint_loaded = false
+        initial_state = nothing
+        
+        if checkpoint_file !== nothing && current_stage > 1
+            log_print("\n    Loading checkpoint from previous stage")
+            log_print("   Found checkpoint: $(basename(checkpoint_file)) (Stage $(prev_stage))")
+            
+            # Initialize arrays first (dimensions only)
+            zero_variables!(mesh, materials)
+            
+            # Load checkpoint data
+            checkpoint_result = load_checkpoint(checkpoint_file, mesh, materials)
+            
+            if checkpoint_result.success
+                checkpoint_loaded = true
+                initial_state = (current_time=checkpoint_result.current_time, 
+                               output_counter=checkpoint_result.output_counter,
+                               next_output_time=checkpoint_result.next_output_time)
+                
+                checkpoint_size = get_checkpoint_file_size(checkpoint_file)
+                log_print("   ✓ Checkpoint loaded successfully ($(checkpoint_size))")
+                log_print("   ✓ Restored state at time: $(checkpoint_result.current_time) $(calc_params["units"]["time_unit"])")
+                log_print("   ✓ Continuing from output counter: $(checkpoint_result.output_counter)")
+            else
+                log_print("   ⚠ Warning: $(checkpoint_result.message)")
+                log_print("   ⚠ Proceeding with normal initialization instead")
+            end
+        end
+
         # Step 4: Initialize simulation variables
-        log_print("\n[4/8] Initializing simulation variables")
-        zero_variables!(mesh, materials)
-        log_print("   ✓ Allocated arrays for $(Nnodes) nodes")
-        log_print("   ✓ Tracking $(NGases) gas species in $(NSoils) soil types")
+        if !checkpoint_loaded
+            log_print("\n[4/8] Initializing simulation variables")
+            zero_variables!(mesh, materials)
+            log_print("   ✓ Allocated arrays for $(Nnodes) nodes")
+            log_print("   ✓ Tracking $(NGases) gas species in $(NSoils) soil types")
+        else
+            log_print("\n[4/8] Simulation variables initialized from checkpoint")
+            log_print("   ✓ Using $(Nnodes) nodes from checkpoint")
+            log_print("   ✓ Tracking $(NGases) gas species in $(NSoils) soil types")
+        end
 
         # Step 5: Apply initial conditions and initialize flows
-        log_print("\n[5/8] Applying initial conditions and initializing flows")
-        apply_all_initial_conditions!(mesh, materials)
-        initialize_all_flows!(mesh, materials, Nnodes, NGases)
-        log_print("   ✓ Initial and boundary conditions applied")
+        if !checkpoint_loaded
+            log_print("\n[5/8] Applying initial conditions and initializing flows")
+            apply_all_initial_conditions!(mesh, materials)
+            initialize_all_flows!(mesh, materials, Nnodes, NGases)
+            log_print("   ✓ Initial and boundary conditions applied")
+        else
+            log_print("\n[5/8] Applying boundary conditions from mesh file")
+            # Apply boundary conditions from mesh file (may have changed between stages)
+            # This sets P_boundary, applies concentration and pressure BCs
+            apply_concentration_bc!(mesh)
+            apply_pressure_bc!(mesh)
+            # Note: Do NOT reapply initial concentrations, temperature, or lime concentration
+            # as those come from the checkpoint state
+            
+            # Initialize flow arrays and boundary influences
+            initialize_all_flows!(mesh, materials, Nnodes, NGases)
+            log_print("   ✓ Boundary conditions reapplied from mesh file")
+            log_print("   ✓ Flow arrays and boundary influences initialized")
+        end
 
         # Step 6: Initialize shape functions and calculate time step information
         log_print("\n[6/8] Initializing shape functions")
@@ -194,7 +247,7 @@ function main()
         log_print("   ✓ Number of time steps: $(time_data.num_steps)")
 
         # Step 8: Run fully explicit solver
-        final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print)
+        final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
 
         # Write checkpoint file for multi-stage calculations
         log_print("\nWriting checkpoint file for stage $(current_stage)...")

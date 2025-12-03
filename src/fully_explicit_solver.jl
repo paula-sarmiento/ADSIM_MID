@@ -186,7 +186,7 @@ where:
 - F = diffusion flow vector = -K × C_g
 - K = stiffness matrix from diffusion term
 """
-function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print)
+function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state=nothing)
     log_print("\n[8/8] Starting fully explicit diffusion solver")
     log_print("   Using $(Threads.nthreads()) threads for parallel execution")
 
@@ -259,15 +259,24 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     #Calculate the absolute pressure
     P = total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
 
-    
-    # Write initial state (t = 0)
-    log_print("      Load step 0 (0.0%)")
-    write_output_vtk(mesh, materials, 0, 0.0, project_name, total_concentration)
-    
-    # Initialize time tracking
-    current_time = 0.0
-    next_output_time = load_step_time
-    output_counter = 1
+    # Initialize time tracking based on checkpoint or from scratch
+    if initial_state !== nothing
+        # Continue from checkpoint
+        current_time = initial_state.current_time
+        output_counter = initial_state.output_counter
+        next_output_time = initial_state.next_output_time
+        log_print("      Continuing from time: $(current_time) $(calc_params["units"]["time_unit"])")
+        log_print("      Next output at: $(next_output_time) $(calc_params["units"]["time_unit"])")
+    else
+        # Start from initial conditions
+        # Write initial state (t = 0)
+        log_print("      Load step 0 (0.0%)")
+        write_output_vtk(mesh, materials, 0, 0.0, project_name, total_concentration)
+        
+        current_time = 0.0
+        next_output_time = load_step_time
+        output_counter = 1
+    end
     
     # Main time stepping loop
     save_data = false
