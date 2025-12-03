@@ -244,15 +244,27 @@ function get_vtk_cell_type(ndim::Int, nodes_per_element::Int)
 end
 
 """
+    sanitize_value(x::Float64, threshold::Float64=1e-30)
+
+Clamp very small values to zero to avoid numerical noise in VTK files.
+Values with absolute value less than threshold are set to 0.0.
+This prevents ParaView parsing issues with extreme scientific notation.
+"""
+function sanitize_value(x::Float64, threshold::Float64=1e-30)
+    return abs(x) < threshold ? 0.0 : x
+end
+
+"""
     write_vtk_scalar_field(io::IO, field_name::String, data::Vector{Float64})
 
 Write a scalar field to legacy VTK file.
+Very small values (|x| < 1e-30) are clamped to zero to avoid ParaView parsing issues.
 """
 function write_vtk_scalar_field(io::IO, field_name::String, data::Vector{Float64})
     println(io, "SCALARS $field_name float 1")
     println(io, "LOOKUP_TABLE default")
     for i in 1:length(data)
-        println(io, data[i])
+        println(io, sanitize_value(data[i]))
     end
 end
 
@@ -261,6 +273,7 @@ end
 
 Write a vector field to legacy VTK file.
 Legacy VTK format requires 3 components for vectors, so z=0 is added for 2D.
+Very small values (|x| < 1e-30) are clamped to zero to avoid ParaView parsing issues.
 """
 function write_vtk_vector_field(io::IO, field_name::String, data::Matrix{Float64}, ndim::Int)
     nnodes = size(data, 1)
@@ -269,10 +282,10 @@ function write_vtk_vector_field(io::IO, field_name::String, data::Matrix{Float64
     for i in 1:nnodes
         if ndim == 2
             # Legacy VTK requires 3 components even for 2D
-            println(io, "$(data[i, 1]) $(data[i, 2]) 0.0")
+            println(io, "$(sanitize_value(data[i, 1])) $(sanitize_value(data[i, 2])) 0.0")
         else
             # 3D: write x, y, and z components
-            println(io, "$(data[i, 1]) $(data[i, 2]) $(data[i, 3])")
+            println(io, "$(sanitize_value(data[i, 1])) $(sanitize_value(data[i, 2])) $(sanitize_value(data[i, 3]))")
         end
     end
 end

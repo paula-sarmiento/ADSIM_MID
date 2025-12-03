@@ -223,12 +223,33 @@ function main()
             # This sets P_boundary, applies concentration and pressure BCs
             apply_concentration_bc!(mesh)
             apply_pressure_bc!(mesh)
-            # Note: Do NOT reapply initial concentrations, temperature, or lime concentration
+            
+            # Save evolved state variables that will be overwritten
+            # when we calculate Caco3_max
+            C_lime_checkpoint = copy(C_lime)
+            C_caco3_checkpoint = copy(C_caco3)
+            binder_content_checkpoint = copy(binder_content)
+            degree_of_carbonation_checkpoint = copy(degree_of_carbonation)
+            
+            # Recalculate Caco3_max and C_lime_residual from material properties
+            # These are derived from initial material properties, not evolved state
+            # Must be recalculated because they're not saved in checkpoint
+            # Note: This will overwrite C_lime with initial values temporarily
+            apply_initial_lime_concentration!(mesh, materials)
+            
+            # Restore evolved state variables from checkpoint
+            global C_lime = C_lime_checkpoint
+            global C_caco3 = C_caco3_checkpoint
+            global binder_content = binder_content_checkpoint
+            global degree_of_carbonation = degree_of_carbonation_checkpoint
+            
+            # Note: Do NOT reapply initial concentrations or temperature
             # as those come from the checkpoint state
             
             # Initialize flow arrays and boundary influences
             initialize_all_flows!(mesh, materials, Nnodes, NGases)
             log_print("   ✓ Boundary conditions reapplied from mesh file")
+            log_print("   ✓ Caco3_max and C_lime_residual recalculated from materials")
             log_print("   ✓ Flow arrays and boundary influences initialized")
         end
 
