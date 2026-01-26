@@ -56,6 +56,52 @@
       <container n="soil_thermal" pn="Thermal properties" icon="" help="Define the thermal properties of the soil material.">
       <value n="specific_heat_solid_" pn="Specific heat solid [FL/(M·Tm)]" v="0.0"/> 
       </container>
+
+      <container n="soil_swrc" pn="Partially saturated properties" icon=""
+        help="Define partially saturated properties and soil water retention curve model parameters."
+      >
+        <value n="swrc_model" pn="SWRC Model" v="None" 
+               values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+               editable="0" actualize_tree="1"
+               help="Select the soil water retention curve model. Parameters will be shown based on selection."/>
+        
+        <value n="anw" pn="Air-water interfacial area Anw [L^-1]" v="0.0"
+               help="Air non-wetting/water-wetting interfacial area parameter."/>
+        
+        <!-- Van Genuchten parameters -->
+        <value n="vg_alpha" pn="Van Genuchten α [L^-1]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"
+               help="Van Genuchten alpha parameter (inverse of air entry pressure)."/>
+        <value n="vg_n" pn="Van Genuchten n [-]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"
+               help="Van Genuchten n parameter (pore size distribution index)."/>
+        <value n="vg_m" pn="Van Genuchten m [-]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"
+               help="Van Genuchten m parameter. Typically m = 1 - 1/n."/>
+        
+        <!-- Cavalcante parameters -->
+        <value n="cav_alpha" pn="Cavalcante α [L^-1]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
+               help="Cavalcante alpha parameter."/>
+        <value n="cav_n" pn="Cavalcante n [-]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
+               help="Cavalcante n parameter."/>
+        <value n="cav_m" pn="Cavalcante m [-]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
+               help="Cavalcante m parameter."/>
+        <value n="cav_lambda" pn="Cavalcante λ [-]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
+               help="Cavalcante lambda parameter."/>
+        
+        <!-- Brook and Corey parameters -->
+        <value n="bc_lambda" pn="Brook and Corey λ [-]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Brook and Corey}]"
+               help="Brook and Corey pore size distribution index (lambda)."/>
+        <value n="bc_bubbling_pressure" pn="Brook and Corey ψb [F/L^2]" v="0.0" 
+               state="[ADSIM_2025::CheckSWRCModel {Brook and Corey}]"
+               help="Brook and Corey bubbling pressure (air entry pressure)."/>
+        
+      </container>
     </condition>
   </blockdata>
 

@@ -597,3 +597,30 @@ proc ADSIM_2025::CheckNumberofElements { element_index } {
         return "hidden"
     }
 }
+
+######################################################################
+# Check if the selected SWRC model matches the requested model
+# Returns "normal" if model matches, "hidden" if it doesn't
+proc ADSIM_2025::CheckSWRCModel { model_name } {
+    set root [customlib::GetBaseRoot]
+    if {$root == ""} {
+        return "hidden"
+    }
+    
+    # Get the current soil material being edited
+    # Updated XPath since soil_swrc is now inside soil_basic condition
+    set xp {//container[@n="materials"]/container[@n="m_soil"]/blockdata[@n="soil_material"]/condition[@n="soil_basic"]/container[@n="soil_swrc"]/value[@n="swrc_model"]/@v}
+    
+    set selected_models [$root selectNodes $xp]
+    
+    # Check if any of the soil materials has the requested model selected
+    # Note: This checks all soil materials. For per-material visibility,
+    # a more complex approach using domNode context would be needed.
+    foreach selected_model $selected_models {
+        if {$selected_model eq $model_name} {
+            return "normal"
+        }
+    }
+    
+    return "hidden"
+}
