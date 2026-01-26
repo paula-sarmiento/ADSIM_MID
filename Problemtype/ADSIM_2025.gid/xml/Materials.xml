@@ -45,6 +45,7 @@
       <value n="saturation_" pn="Saturation [-]" v="0.0"/>
       <value n="granular_tortuosity_" pn="Granular tortuosity [-]" v="0.0"/>
       <value n="intrinsic_permeabiliy_" pn="Intrinsic permeability [L^2]" v="0.0"/>
+      <value n="residual_water_content_" pn="Residual water content [-]" v="0.0"/>
       <value n="lime_content_" pn="Lime content [-]" v="0.0" help="Defined as a fraction of the weight of solids."/>
       <value n="lime_impure_" pn="Residual lime content [-]" v="0.0" help="Defined as a fraction of the lime content."/>
       <value n="reaction_rate_" pn="Reaction rate [mol/L^3.s]" v="0.0" help="Defined as a fraction of the lime content."/>
