@@ -208,6 +208,33 @@ proc ADSIM::WriteSoilProperties { root } {
             
             set spec_heat_solid [$first_group selectNodes {string(.//value[@n="specific_heat_solid_"]/@v)}]
             GiD_WriteCalculationFile puts "specific_heat_solids = $spec_heat_solid"
+            
+            # SWRC (Soil Water Retention Curve) properties
+            GiD_WriteCalculationFile puts "# SWRC properties"
+            
+            set swrc_model [$first_group selectNodes {string(.//value[@n="swrc_model"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_model = \"$swrc_model\""
+            
+            set anw [$first_group selectNodes {string(.//value[@n="anw"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_anw = $anw"
+            
+            # Van Genuchten parameters
+            set vg_alpha [$first_group selectNodes {string(.//value[@n="vg_alpha"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_vg_alpha = $vg_alpha"
+            
+            set vg_n [$first_group selectNodes {string(.//value[@n="vg_n"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_vg_n = $vg_n"
+            
+            # Cavalcante parameters
+            set cav_delta [$first_group selectNodes {string(.//value[@n="cav_delta"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_cav_delta = $cav_delta"
+            
+            # Brooks and Corey parameters
+            set bc_air_entry [$first_group selectNodes {string(.//value[@n="bc_air_entry_pressure"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_bc_air_entry_pressure = $bc_air_entry"
+            
+            set bc_lambda [$first_group selectNodes {string(.//value[@n="bc_lambda"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_bc_lambda = $bc_lambda"
         }
         
         GiD_WriteCalculationFile puts ""
