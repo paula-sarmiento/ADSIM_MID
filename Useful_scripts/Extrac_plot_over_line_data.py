@@ -7,7 +7,7 @@ import os
 # needs existing active plot over line object
 plotLine = GetActiveSource()
 
-output_folder = r"C:\Users\zamcr\Dcuments\GitHub\ADSIM\src\output"    # change to your folder
+output_folder = r"/Users/paula/Documents/GitHub/ADSIM_MID/output"    # change to your folder
 filename_pattern = "t{step:02d}.csv"   # custom naming pattern
 
 # Create folder if needed

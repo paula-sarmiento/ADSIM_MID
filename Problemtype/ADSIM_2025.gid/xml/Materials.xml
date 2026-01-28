@@ -62,44 +62,44 @@
       >
         <value n="swrc_model" pn="SWRC Model" v="None" 
                values="None,Van Genuchten,Cavalcante,Brook and Corey" 
-               editable="0" actualize_tree="1"
-               help="Select the soil water retention curve model. Parameters will be shown based on selection."/>
+               editable="0"
+               help="Select the soil water retention curve model. Fill ONLY the parameters for your selected model."/>
         
         <value n="anw" pn="Air-water interfacial area Anw [L^-1]" v="0.0"
                help="Air non-wetting/water-wetting interfacial area parameter."/>
         
         <!-- Van Genuchten parameters -->
-        <value n="vg_alpha" pn="Van Genuchten α [L^-1]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"
-               help="Van Genuchten alpha parameter (inverse of air entry pressure)."/>
-        <value n="vg_n" pn="Van Genuchten n [-]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"
-               help="Van Genuchten n parameter (pore size distribution index)."/>
-        <value n="vg_m" pn="Van Genuchten m [-]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"
-               help="Van Genuchten m parameter. Typically m = 1 - 1/n."/>
+        <container n="vg_params" pn="Van Genuchten Parameters" icon="folder.png" open="0"
+          help="Use these parameters ONLY if Van Genuchten is selected above. Leave at 0.0 otherwise.">
+          <value n="vg_alpha" pn="Van Genuchten α [L^-1]" v="0.0"
+                 help="Van Genuchten alpha parameter (inverse of air entry pressure)."/>
+          <value n="vg_n" pn="Van Genuchten n [-]" v="0.0"
+                 help="Van Genuchten n parameter (pore size distribution index)."/>
+          <value n="vg_m" pn="Van Genuchten m [-]" v="0.0"
+                 help="Van Genuchten m parameter. Typically m = 1 - 1/n."/>
+        </container>
         
         <!-- Cavalcante parameters -->
-        <value n="cav_alpha" pn="Cavalcante α [L^-1]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
-               help="Cavalcante alpha parameter."/>
-        <value n="cav_n" pn="Cavalcante n [-]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
-               help="Cavalcante n parameter."/>
-        <value n="cav_m" pn="Cavalcante m [-]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
-               help="Cavalcante m parameter."/>
-        <value n="cav_lambda" pn="Cavalcante λ [-]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"
-               help="Cavalcante lambda parameter."/>
+        <container n="cav_params" pn="Cavalcante Parameters" icon="folder.png" open="0"
+          help="Use these parameters ONLY if Cavalcante is selected above. Leave at 0.0 otherwise.">
+          <value n="cav_alpha" pn="Cavalcante α [L^-1]" v="0.0"
+                 help="Cavalcante alpha parameter."/>
+          <value n="cav_n" pn="Cavalcante n [-]" v="0.0"
+                 help="Cavalcante n parameter."/>
+          <value n="cav_m" pn="Cavalcante m [-]" v="0.0"
+                 help="Cavalcante m parameter."/>
+          <value n="cav_lambda" pn="Cavalcante λ [-]" v="0.0"
+                 help="Cavalcante lambda parameter."/>
+        </container>
         
         <!-- Brook and Corey parameters -->
-        <value n="bc_lambda" pn="Brook and Corey λ [-]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Brook and Corey}]"
-               help="Brook and Corey pore size distribution index (lambda)."/>
-        <value n="bc_bubbling_pressure" pn="Brook and Corey ψb [F/L^2]" v="0.0" 
-               state="[ADSIM_2025::CheckSWRCModel {Brook and Corey}]"
-               help="Brook and Corey bubbling pressure (air entry pressure)."/>
+        <container n="bc_params" pn="Brook and Corey Parameters" icon="folder.png" open="0"
+          help="Use these parameters ONLY if Brook and Corey is selected above. Leave at 0.0 otherwise.">
+          <value n="bc_lambda" pn="Brook and Corey λ [-]" v="0.0"
+                 help="Brook and Corey pore size distribution index (lambda)."/>
+          <value n="bc_bubbling_pressure" pn="Brook and Corey ψb [F/L^2]" v="0.0"
+                 help="Brook and Corey bubbling pressure (air entry pressure)."/>
+        </container>
         
       </container>
     </condition>
