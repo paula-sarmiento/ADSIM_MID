@@ -3,6 +3,7 @@
 <container n="initial_conditions" pn="Initial Conditions" icon="icon_initial_cond.png" help="Initial concentration, temperature, pressure, or flow.">
   <include path="xml/InitialConcentrations.xml"/>
   <include path="xml/InitialTemperature.xml"/> 
+  <include path="xml/InitialVolumetricContent.xml"/>
   <!-- <include path="xml/InitialFlow.xml"/>  Needs implementation-->
   <!-- <include path="xml/InitialPressure.xml"/>  Needs implementation-->
 </container>

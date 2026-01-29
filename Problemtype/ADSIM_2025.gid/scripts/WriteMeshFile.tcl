@@ -42,16 +42,19 @@ proc ADSIM::WriteMeshFile { filename } {
     ADSIM::WriteMeshPartialPressureBC $root
     
     # Write liquid discharge boundary conditions
-    ADSIM::WriteMeshLiquidDischargeBC $root
+    ADSIM::WriteMeshDischargeVelocityBC $root
     
-    # Write volumetric water content boundary conditions
-    ADSIM::WriteMeshWaterContentBC $root
+    # Write volumetric content boundary conditions
+    ADSIM::WriteMeshVolumetricContentBC $root
     
     # Write initial gas concentrations
     ADSIM::WriteMeshInitialConcentrations $root
     
     # Write initial temperature
     ADSIM::WriteMeshInitialTemperature $root
+    
+    # Write initial volumetric content
+    ADSIM::WriteMeshInitialVolumetricContent $root
     
     # Write material assignation
     ADSIM::WriteMeshMaterials $root
@@ -272,34 +275,34 @@ proc ADSIM::WriteMeshPressureBC { root } {
 #===============================================================================
 # Write liquid discharge boundary conditions
 #===============================================================================
-proc ADSIM::WriteMeshLiquidDischargeBC { root } {
+proc ADSIM::WriteMeshDischargeVelocityBC { root } {
     GiD_WriteCalculationFile puts "liquid_discharge_bc"
 
     # Line conditions
     set ov_type "line"
-    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Liquid_Discharge"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Discharge_velocity"]/group[@ov=%s]} $ov_type]
     set formats ""
 
     foreach gNode [$root selectNodes $xp] {
-        set v1 [$gNode selectNodes {string(value[@n="liquid_discharge"]/@v)}]
+        set v1 [$gNode selectNodes {string(value[@n="discharge_velocity"]/@v)}]
         dict set formats [$gNode @n] "%d $v1\n"
     }
 
     # Point conditions
     set ov_type "point"
-    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Liquid_Discharge"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Discharge_velocity"]/group[@ov=%s]} $ov_type]
     
     foreach gNode [$root selectNodes $xp] {
-        set v1 [$gNode selectNodes {string(value[@n="liquid_discharge"]/@v)}]
+        set v1 [$gNode selectNodes {string(value[@n="discharge_velocity"]/@v)}]
         dict set formats [$gNode @n] "%d $v1\n"
     }
 
     # Surface conditions
     set ov_type "surface"
-    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Liquid_Discharge"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Discharge_velocity"]/group[@ov=%s]} $ov_type]
     
     foreach gNode [$root selectNodes $xp] {
-        set v1 [$gNode selectNodes {string(value[@n="liquid_discharge"]/@v)}]
+        set v1 [$gNode selectNodes {string(value[@n="discharge_velocity"]/@v)}]
         dict set formats [$gNode @n] "%d $v1\n"
     }
 
@@ -312,27 +315,27 @@ proc ADSIM::WriteMeshLiquidDischargeBC { root } {
 }
 
 #===============================================================================
-# Write volumetric water content boundary conditions
+# Write volumetric content boundary conditions
 #===============================================================================
-proc ADSIM::WriteMeshWaterContentBC { root } {
-    GiD_WriteCalculationFile puts "water_content_bc"
+proc ADSIM::WriteMeshVolumetricContentBC { root } {
+    GiD_WriteCalculationFile puts "volumetric_content_bc"
 
     # Line conditions
     set ov_type "line"
-    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Water_Content"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Volumetric_Content"]/group[@ov=%s]} $ov_type]
     set formats ""
 
     foreach gNode [$root selectNodes $xp] {
-        set v1 [$gNode selectNodes {string(value[@n="volumetric_water_content"]/@v)}]
+        set v1 [$gNode selectNodes {string(value[@n="volumetric_content"]/@v)}]
         dict set formats [$gNode @n] "%d $v1\n"
     }
 
     # Point conditions
     set ov_type "point"
-    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Water_Content"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Volumetric_Content"]/group[@ov=%s]} $ov_type]
     
     foreach gNode [$root selectNodes $xp] {
-        set v1 [$gNode selectNodes {string(value[@n="volumetric_water_content"]/@v)}]
+        set v1 [$gNode selectNodes {string(value[@n="volumetric_content"]/@v)}]
         dict set formats [$gNode @n] "%d $v1\n"
     }
 
@@ -340,7 +343,7 @@ proc ADSIM::WriteMeshWaterContentBC { root } {
     set counter [GiD_WriteCalculationFile nodes -count $formats]
     GiD_WriteCalculationFile puts $counter
     GiD_WriteCalculationFile nodes $formats
-    GiD_WriteCalculationFile puts "end water_content_bc"
+    GiD_WriteCalculationFile puts "end volumetric_content_bc"
     GiD_WriteCalculationFile puts ""
 }
 
@@ -456,6 +459,31 @@ proc ADSIM::WriteMeshInitialTemperature { root } {
     GiD_WriteCalculationFile puts $counter
     GiD_WriteCalculationFile elements $formats
     GiD_WriteCalculationFile puts "end initial_temperature"
+    GiD_WriteCalculationFile puts ""
+}
+
+#===============================================================================
+# Write initial volumetric content
+#===============================================================================
+proc ADSIM::WriteMeshInitialVolumetricContent { root } {
+    GiD_WriteCalculationFile puts "initial_volumetric_content"
+
+    # Surface conditions (applied to elements)
+    set ov_type "surface"
+    set xp [format_xpath {//container[@n="initial_conditions"]/condition[@n="Initial_Content"]/group[@ov=%s]} $ov_type]
+    set formats ""
+
+    foreach gNode [$root selectNodes $xp] {
+        set v1 [$gNode selectNodes {string(value[@n="initial_content"]/@v)}]
+        #write elements with values
+        dict set formats [$gNode @n] "%d $v1\n"
+    }
+
+    # Add a counter 
+    set counter [GiD_WriteCalculationFile elements -count $formats]
+    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile elements $formats
+    GiD_WriteCalculationFile puts "end initial_volumetric_content"
     GiD_WriteCalculationFile puts ""
 }
 
