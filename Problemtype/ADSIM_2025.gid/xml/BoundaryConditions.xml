@@ -4,4 +4,9 @@
   <include path="xml/Partial_Pressure_BC.xml"/>
   <include path="xml/Flow_BC.xml"/>
   <include path="xml/Total_Pressure_BC.xml"/>
+  
+  <container n="Liquid_BCs" pn="Liquid BCs" icon="icon_drop.png" help="Boundary conditions for liquid phase">
+    <include path="xml/Water_Content_BC.xml"/>
+    <include path="xml/Liquid_Flow_BC.xml"/>
+  </container>
 </container>
