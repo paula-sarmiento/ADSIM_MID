@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
 
-<condition n="Discharge_velocity" pn="Discharge velocity" icon="icon_flow_bc" ov="point,line,surface" help="Use this condition to apply constant liquid discharge velocity normal to the boundary. Positive values indicate inflow, negative values indicate outflow.">
+<condition n="Discharge_velocity" pn="Discharge velocity (constant)" icon="icon_flow_bc" ov="point,line,surface" help="Use this condition to apply constant liquid discharge velocity normal to the boundary. Positive values indicate inflow, negative values indicate outflow.">
 	<value n="discharge_velocity" pn="Discharge velocity [L/T]" v="0.0" help="Liquid discharge velocity (positive = inflow, negative = outflow)"/>
 </condition>

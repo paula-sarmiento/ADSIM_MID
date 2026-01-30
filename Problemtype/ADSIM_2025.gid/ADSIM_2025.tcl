@@ -597,3 +597,30 @@ proc ADSIM_2025::CheckNumberofElements { element_index } {
         return "hidden"
     }
 }
+######################################################################
+# Check if a discharge time set should be active/visible
+# Returns "normal" if time set exists, "hidden" if it doesn't
+proc ADSIM_2025::CheckDischargeTimeSet { set_index } {
+    set root [customlib::GetBaseRoot]
+    if {$root == ""} {
+        # If we can't get root, show first 3 time sets by default
+        if {$set_index <= 3} {
+            return "normal"
+        } else {
+            return "hidden"
+        }
+    }
+    
+    set xp {string(//container[@n="BC"]/container[@n="Liquid_BCs"]/container[@n="Discharge_velocity_transient_container"]/container[@n="transient_bc_settings"]/value[@n="num_discharge_time_sets"]/@v)}
+    set num_sets [$root selectNodes $xp]
+    
+    if {$num_sets eq ""} {
+        set num_sets 3
+    }
+    
+    if {$set_index <= $num_sets} {
+        return "normal"
+    } else {
+        return "hidden"
+    }
+}

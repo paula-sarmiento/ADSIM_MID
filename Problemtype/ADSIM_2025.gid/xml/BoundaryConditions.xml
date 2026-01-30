@@ -8,5 +8,6 @@
   <container n="Liquid_BCs" pn="Liquid BCs" icon="icon_drop.png" help="Boundary conditions for liquid phase">
     <include path="xml/Volumetric_Content_BC.xml"/>
     <include path="xml/Liquid_Flow_BC.xml"/>
+    <include path="xml/Transient_Liquid_Flow_BC.xml"/>
   </container>
 </container>

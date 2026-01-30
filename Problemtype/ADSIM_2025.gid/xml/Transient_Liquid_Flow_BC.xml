@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
+
+<container n="Discharge_velocity_transient_container" pn="Discharge velocity (transient)" icon="icon_transient" help="Configure and apply transient discharge velocity boundary conditions">
+  
+  <!-- Configuration settings -->
+  <container n="transient_bc_settings" pn="Transient BC Settings" icon="icon_settings" help="Configure settings for transient boundary conditions">
+    <value n="num_discharge_time_sets" pn="Number of discharge time sets" v="3" values="2,3,4,5,6,7,8,9,10" help="Specify how many time-discharge pairs will be available"/>
+  </container>
+  
+  <!-- Boundary condition application -->
+  <condition n="Transient_Discharge_velocity" pn="Apply discharge velocity" icon="icon_select" ov="point,line,surface" help="Apply time-dependent liquid discharge velocity using piecewise-linear interpolation between defined time points.">
+    
+    <!-- Time point 1 -->
+  <value n="time_1" pn="Time 1 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 1]" help="Time for first point"/>
+  <value n="discharge_1" pn="Discharge 1 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 1]" help="Discharge velocity at time 1"/>
+  
+  <!-- Time point 2 -->
+  <value n="time_2" pn="Time 2 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 2]" help="Time for second point"/>
+  <value n="discharge_2" pn="Discharge 2 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 2]" help="Discharge velocity at time 2"/>
+  
+  <!-- Time point 3 -->
+  <value n="time_3" pn="Time 3 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 3]" help="Time for third point"/>
+  <value n="discharge_3" pn="Discharge 3 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 3]" help="Discharge velocity at time 3"/>
+  
+  <!-- Time point 4 -->
+  <value n="time_4" pn="Time 4 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 4]" help="Time for fourth point"/>
+  <value n="discharge_4" pn="Discharge 4 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 4]" help="Discharge velocity at time 4"/>
+  
+  <!-- Time point 5 -->
+  <value n="time_5" pn="Time 5 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 5]" help="Time for fifth point"/>
+  <value n="discharge_5" pn="Discharge 5 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 5]" help="Discharge velocity at time 5"/>
+  
+  <!-- Time point 6 -->
+  <value n="time_6" pn="Time 6 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 6]" help="Time for sixth point"/>
+  <value n="discharge_6" pn="Discharge 6 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 6]" help="Discharge velocity at time 6"/>
+  
+  <!-- Time point 7 -->
+  <value n="time_7" pn="Time 7 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 7]" help="Time for seventh point"/>
+  <value n="discharge_7" pn="Discharge 7 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 7]" help="Discharge velocity at time 7"/>
+  
+  <!-- Time point 8 -->
+  <value n="time_8" pn="Time 8 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 8]" help="Time for eighth point"/>
+  <value n="discharge_8" pn="Discharge 8 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 8]" help="Discharge velocity at time 8"/>
+  
+  <!-- Time point 9 -->
+  <value n="time_9" pn="Time 9 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 9]" help="Time for ninth point"/>
+  <value n="discharge_9" pn="Discharge 9 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 9]" help="Discharge velocity at time 9"/>
+  
+  <!-- Time point 10 -->
+  <value n="time_10" pn="Time 10 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 10]" help="Time for tenth point"/>
+  <value n="discharge_10" pn="Discharge 10 [L/T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 10]" help="Discharge velocity at time 10"/>
+
+  </condition>
+
+</container>

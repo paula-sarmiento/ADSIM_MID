@@ -44,6 +44,9 @@ proc ADSIM::WriteMeshFile { filename } {
     # Write liquid discharge boundary conditions
     ADSIM::WriteMeshDischargeVelocityBC $root
     
+    # Write transient liquid discharge boundary conditions
+    ADSIM::WriteMeshTransientDischargeBC $root
+    
     # Write volumetric content boundary conditions
     ADSIM::WriteMeshVolumetricContentBC $root
     
@@ -311,6 +314,53 @@ proc ADSIM::WriteMeshDischargeVelocityBC { root } {
     GiD_WriteCalculationFile puts $counter
     GiD_WriteCalculationFile nodes $formats
     GiD_WriteCalculationFile puts "end liquid_discharge_bc"
+    GiD_WriteCalculationFile puts ""
+}
+
+#===============================================================================
+# Write transient liquid discharge boundary conditions
+#===============================================================================
+proc ADSIM::WriteMeshTransientDischargeBC { root } {
+    GiD_WriteCalculationFile puts "transient_liquid_discharge_bc"
+
+    set formats ""
+    
+    # Get number of time sets from BC container settings
+    set num_points_xpath {string(//container[@n="BC"]/container[@n="Liquid_BCs"]/container[@n="Discharge_velocity_transient_container"]/container[@n="transient_bc_settings"]/value[@n="num_discharge_time_sets"]/@v)}
+    set num_points [$root selectNodes $num_points_xpath]
+    if {$num_points eq ""} {
+        set num_points 3
+    }
+
+    # Process all geometry types (line, point, surface)
+    foreach ov_type {line point surface} {
+        set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/container[@n="Discharge_velocity_transient_container"]/condition[@n="Transient_Discharge_velocity"]/group[@ov=%s]} $ov_type]
+        
+        foreach gNode [$root selectNodes $xp] {
+            # Build line: node_id num_points t1 v1 t2 v2 ...
+            set line "%d $num_points"
+            
+            # Loop through each time point and read time/discharge pairs
+            for {set i 1} {$i <= $num_points} {incr i} {
+                set time_xpath [format {string(value[@n="time_%d"]/@v)} $i]
+                set discharge_xpath [format {string(value[@n="discharge_%d"]/@v)} $i]
+                
+                set t [$gNode selectNodes $time_xpath]
+                set v [$gNode selectNodes $discharge_xpath]
+                
+                append line " $t $v"
+            }
+            
+            append line "\n"
+            dict set formats [$gNode @n] $line
+        }
+    }
+
+    # Add a counter 
+    set counter [GiD_WriteCalculationFile nodes -count $formats]
+    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile nodes $formats
+    GiD_WriteCalculationFile puts "end transient_liquid_discharge_bc"
     GiD_WriteCalculationFile puts ""
 }
 
