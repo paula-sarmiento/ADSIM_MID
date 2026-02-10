@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
 
-<condition n="gas_absolute_boundary" pn="Absolute Pressure" icon="icon_pressure_bc.png" ov="point,line,surface" help="Use this condition to constrain absolute pressure boundary conditions">
+<condition n="gas_absolute_boundary" pn="Absolute Pressure" icon="icon_pressure_bc.png" ov="point,line" help="Use this condition to constrain absolute pressure boundary conditions">
 	<value n="absolute_pressure" pn="Absolute Pressure [F/L^2]" v="0.0" />
 	<!-- <value n="vacating_gas_index" pn="Vacating gas index" v="1" values="[ADSIM_2025::GetGasIndices]" help="Select the gas index that will vacate through this boundary" /> -->
 </condition>

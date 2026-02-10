@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
 <container n="BC" pn="Boundary conditions" icon="icon_bc.png" help="Specify initial and boundary conditions for the problem.">
-  <include path="xml/Concentration_BC.xml"/>
-  <include path="xml/Partial_Pressure_BC.xml"/>
-  <include path="xml/Flow_BC.xml"/>
-  <include path="xml/Total_Pressure_BC.xml"/>
+  
+  <container n="Gas_BCs" pn="Gas BCs" icon="icon_gas.png" help="Boundary conditions for gas phase">
+    <include path="xml/Concentration_BC.xml"/>
+    <include path="xml/Partial_Pressure_BC.xml"/>
+    <include path="xml/Flow_BC.xml"/>
+    <include path="xml/Total_Pressure_BC.xml"/>
+  </container>
   
   <container n="Liquid_BCs" pn="Liquid BCs" icon="icon_drop.png" help="Boundary conditions for liquid phase">
     <include path="xml/Volumetric_Content_BC.xml"/>

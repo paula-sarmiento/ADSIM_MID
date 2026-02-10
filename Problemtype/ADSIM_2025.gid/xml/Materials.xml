@@ -65,8 +65,11 @@
                editable="0"
                help="Select soil water retention curve model, then expand the matching container below to fill parameters."/>
         
-        <value n="anw" pn="Air-water interfacial area [L^-1]" v="0.0"
-               help="Air-water interfacial area parameter for partially saturated flow."/>
+        <value n="max_anw" pn="Max Air Interfacial area (anw) [L^-1]" v="0.0"
+               help="Maximum air-water interfacial area for partially saturated flow."/>
+        
+        <value n="saturation_max_anw" pn="Saturation at max anw [-]" v="0.0"
+               help="Saturation at which maximum air-water interfacial area occurs."/>
         
         <!-- Van Genuchten parameters -->
         <container n="vg_params" pn="Van Genuchten" icon="" open="0"

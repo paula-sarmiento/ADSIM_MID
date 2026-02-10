@@ -194,6 +194,9 @@ proc ADSIM::WriteSoilProperties { root } {
             set perm [$first_group selectNodes {string(.//value[@n="intrinsic_permeabiliy_"]/@v)}]
             GiD_WriteCalculationFile puts "intrinsic_permeability = $perm"
             
+            set res_water [$first_group selectNodes {string(.//value[@n="residual_water_content_"]/@v)}]
+            GiD_WriteCalculationFile puts "residual_water_content = $res_water"
+            
             set lime [$first_group selectNodes {string(.//value[@n="lime_content_"]/@v)}]
             GiD_WriteCalculationFile puts "lime_content = $lime"
 
@@ -215,8 +218,11 @@ proc ADSIM::WriteSoilProperties { root } {
             set swrc_model [$first_group selectNodes {string(.//value[@n="swrc_model"]/@v)}]
             GiD_WriteCalculationFile puts "swrc_model = \"$swrc_model\""
             
-            set anw [$first_group selectNodes {string(.//value[@n="anw"]/@v)}]
-            GiD_WriteCalculationFile puts "swrc_anw = $anw"
+            set max_anw [$first_group selectNodes {string(.//value[@n="max_anw"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_max_anw = $max_anw"
+            
+            set saturation_max_anw [$first_group selectNodes {string(.//value[@n="saturation_max_anw"]/@v)}]
+            GiD_WriteCalculationFile puts "swrc_saturation_max_anw = $saturation_max_anw"
             
             # Van Genuchten parameters
             set vg_alpha [$first_group selectNodes {string(.//value[@n="vg_alpha"]/@v)}]

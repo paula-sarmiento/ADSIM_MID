@@ -143,7 +143,7 @@ proc ADSIM::WriteMeshConcentrationBC { root } {
 
     # Line conditions
     set ov_type "line"
-    set xp [format_xpath {container[@n="BC"]/condition[@n="gas_fixities"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="gas_fixities"]/group[@ov=%s]} $ov_type]
     set formats ""
 
     foreach gNode [$root selectNodes $xp] {
@@ -162,7 +162,7 @@ proc ADSIM::WriteMeshConcentrationBC { root } {
 
     #point conditions
     set ov_type "point" 
-    set xp [format_xpath {container[@n="BC"]/condition[@n="gas_fixities"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="gas_fixities"]/group[@ov=%s]} $ov_type]
 
     foreach gNode [$root selectNodes $xp] {
     set aux ""
@@ -198,7 +198,7 @@ proc ADSIM::WriteMeshFlowBC { root } {
 
     # Line conditions
     set ov_type "line"
-    set xp [format_xpath {container[@n="BC"]/condition[@n="Gas_Flow"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="Gas_Flow"]/group[@ov=%s]} $ov_type]
     set formats ""
 
     foreach gNode [$root selectNodes $xp] {
@@ -217,7 +217,7 @@ proc ADSIM::WriteMeshFlowBC { root } {
 
     #point conditions
     set ov_type "point"
-    set xp [format_xpath {container[@n="BC"]/condition[@n="Gas_Flow"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="Gas_Flow"]/group[@ov=%s]} $ov_type]
     foreach gNode [$root selectNodes $xp] {
     set aux ""
     for {set i 1} {$i <= $num_gases} {incr i} {
@@ -247,7 +247,7 @@ proc ADSIM::WriteMeshPressureBC { root } {
 
     # Line conditions
     set ov_type "line"
-    set xp [format_xpath {container[@n="BC"]/condition[@n="gas_absolute_boundary"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="gas_absolute_boundary"]/group[@ov=%s]} $ov_type]
     set formats ""
 
     foreach gNode [$root selectNodes $xp] {
@@ -259,7 +259,7 @@ proc ADSIM::WriteMeshPressureBC { root } {
 
     #point conditions
     set ov_type "point"
-    set xp [format_xpath {container[@n="BC"]/condition[@n="gas_absolute_boundary"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="gas_absolute_boundary"]/group[@ov=%s]} $ov_type]
     foreach gNode [$root selectNodes $xp] {
         set v1 [$gNode selectNodes {string(value[@n="absolute_pressure"]/@v)}]
         # set gas_idx [$gNode selectNodes {string(value[@n="vacating_gas_index"]/@v)}]
@@ -410,7 +410,7 @@ proc ADSIM::WriteMeshPartialPressureBC { root } {
 
     # Line conditions
     set ov_type "line"
-    set xp [format_xpath {container[@n="BC"]/condition[@n="gas_partial_pressure"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="gas_partial_pressure"]/group[@ov=%s]} $ov_type]
     set formats ""
 
     foreach gNode [$root selectNodes $xp] {
@@ -428,7 +428,7 @@ proc ADSIM::WriteMeshPartialPressureBC { root } {
 
     #point conditions
     set ov_type "point" 
-    set xp [format_xpath {container[@n="BC"]/condition[@n="gas_partial_pressure"]/group[@ov=%s]} $ov_type]
+    set xp [format_xpath {container[@n="BC"]/container[@n="Gas_BCs"]/condition[@n="gas_partial_pressure"]/group[@ov=%s]} $ov_type]
 
     foreach gNode [$root selectNodes $xp] {
         set aux ""

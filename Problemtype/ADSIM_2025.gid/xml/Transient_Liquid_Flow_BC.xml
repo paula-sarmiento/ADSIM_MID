@@ -8,7 +8,7 @@
   </container>
   
   <!-- Boundary condition application -->
-  <condition n="Transient_Discharge_velocity" pn="Apply discharge velocity" icon="icon_select" ov="point,line,surface" help="Apply time-dependent liquid discharge velocity using piecewise-linear interpolation between defined time points.">
+  <condition n="Transient_Discharge_velocity" pn="Apply discharge velocity" icon="icon_select" ov="point,line" help="Apply time-dependent liquid discharge velocity using piecewise-linear interpolation between defined time points.">
     
     <!-- Time point 1 -->
   <value n="time_1" pn="Time 1 [T]" v="0.0" state="[ADSIM_2025::CheckDischargeTimeSet 1]" help="Time for first point"/>
