@@ -51,6 +51,7 @@ soil_dictionary= [soil_1, soil_2, ... soil_n]
 specific_gravity= val
 porosity= val
 saturation= val
+residual_water_content= val
 granular_tortuosity= val
 intrinsic_permeability= val
 lime_content= val
@@ -58,12 +59,22 @@ residual_lime= val
 reaction_rate= val
 #thermal properties
 specific_heat_solids= val
+#SWRC properties (optional, defaults provided)
+swrc_model= "None"  #options: "None", "Van Genuchten", "Cavalcante", "Brook and Corey"
+swrc_max_anw= val  #optional, defaults to 0.0
+swrc_saturation_max_anw= val  #optional, defaults to 0.0
+swrc_vg_alpha= val  #optional, Van Genuchten parameter, defaults to 0.0
+swrc_vg_n= val  #optional, Van Genuchten parameter, defaults to 0.0
+swrc_cav_delta= val  #optional, Cavalcante parameter, defaults to 0.0
+swrc_bc_air_entry_pressure= val  #optional, Brooks-Corey parameter, defaults to 0.0
+swrc_bc_lambda= val  #optional, Brooks-Corey parameter, defaults to 0.0
 
 [soil.soil_2]
 #physical properties
 specific_gravity= val
 porosity= val
 saturation= val
+residual_water_content= val
 granular_tortuosity= val
 intrinsic_permeability= val
 lime_content= val
@@ -71,6 +82,15 @@ residual_lime= val
 reaction_rate= val
 #thermal properties
 specific_heat_solids= val
+#SWRC properties (optional)
+swrc_model= "None"
+swrc_max_anw= val
+swrc_saturation_max_anw= val
+swrc_vg_alpha= val
+swrc_vg_n= val
+swrc_cav_delta= val
+swrc_bc_air_entry_pressure= val
+swrc_bc_lambda= val
 .
 .
 .
@@ -79,14 +99,22 @@ specific_heat_solids= val
 specific_gravity= val
 porosity= val
 saturation= val
+residual_water_content= val
 granular_tortuosity= val
 intrinsic_permeability= val
 lime_content= val
 residual_lime= val
-reaction_rate= val
+lime_reaction_rate= val  #optional
 #thermal properties
 specific_heat_solids= val
+#SWRC properties (optional)
+swrc_model= "None"
+swrc_max_anw= val
+swrc_saturation_max_anw= val
+swrc_vg_alpha= val
+swrc_vg_n= val
+swrc_cav_delta= val
+swrc_bc_air_entry_pressure= val
+swrc_bc_lambda= val
 
 ```
-
-

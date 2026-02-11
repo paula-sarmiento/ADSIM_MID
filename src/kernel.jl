@@ -168,7 +168,15 @@ function main()
             log_print("   ✓ CO2 gas is defined in materials")
         end
 
-        # Step 3.6: Check for existing checkpoint from previous stage
+        # Step 3.6: Validate SWRC parameters if any soil uses SWRC
+        swrc_used = any(soil.swrc_model != "None" for (name, soil) in materials.soils)
+        if swrc_used
+            log_print("\nValidating SWRC parameters")
+            validate_swrc_parameters(materials)
+            log_print("   ✓ SWRC model parameters validated")
+        end
+
+        # Step 3.7: Check for existing checkpoint from previous stage
         checkpoint_file, prev_stage = find_latest_checkpoint(project_name, output_dir)
         checkpoint_loaded = false
         initial_state = nothing
