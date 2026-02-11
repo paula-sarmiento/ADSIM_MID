@@ -18,9 +18,12 @@ Structure to store all mesh data and associated boundary/initial conditions.
 - `uniform_flow_bc::Dict{Int, Vector{Float64}}`: Uniform flow BC (node_id => [gas1, gas2, ...])
 - `absolute_pressure_bc::Dict{Int, Float64}`: Absolute pressure BC (node_id => pressure)
 - `partial_pressure_bc::Dict{Int, Vector{Float64}}`: Partial pressure BC (node_id => [P_gas1, P_gas2, ...])
-# - `vacating_gas_bc::Dict{Int, Int}`: Vacating gas index for pressure BC (node_id => gas_index)
+- `liquid_discharge_bc::Dict{Int, Float64}`: Liquid discharge velocity BC (node_id => discharge_velocity [m/s])
+- `transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}`: Transient liquid discharge (node_id => [(time, velocity), ...])
+- `volumetric_content_bc::Dict{Int, Float64}`: Volumetric content BC (node_id => volumetric_content [-])
 - `initial_concentrations::Dict{Int, Vector{Float64}}`: Initial concentrations (elem_id => [gas1, gas2, ...])
 - `initial_temperature::Dict{Int, Float64}`: Initial temperature (elem_id => temperature)
+- `initial_volumetric_content::Dict{Int, Float64}`: Initial volumetric content (elem_id => volumetric_content [-])
 - `materials::Dict{Int, Int}`: Material assignment (elem_id => material_index)
 """
 
@@ -33,8 +36,12 @@ mutable struct MeshData
     uniform_flow_bc::Dict{Int, Vector{Float64}}
     absolute_pressure_bc::Dict{Int, Float64}
     partial_pressure_bc::Dict{Int, Vector{Float64}}
+    liquid_discharge_bc::Dict{Int, Float64}
+    transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}
+    volumetric_content_bc::Dict{Int, Float64}
     initial_concentrations::Dict{Int, Vector{Float64}}
     initial_temperature::Dict{Int, Float64}
+    initial_volumetric_content::Dict{Int, Float64}
     materials::Dict{Int, Int}
     
     function MeshData()
@@ -45,7 +52,11 @@ mutable struct MeshData
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
             Dict{Int, Vector{Float64}}(),
+            Dict{Int, Float64}(),
+            Dict{Int, Vector{Tuple{Float64, Float64}}}(),
+            Dict{Int, Float64}(),
             Dict{Int, Vector{Float64}}(),
+            Dict{Int, Float64}(),
             Dict{Int, Float64}(),
             Dict{Int, Int}())
     end
@@ -135,6 +146,18 @@ function read_mesh_file(filename::String)
             elseif line == "partial_pressure_bc"
                 line_idx = parse_partial_pressure_bc!(mesh, lines, line_idx + 1)
                 
+            # Parse liquid discharge boundary conditions
+            elseif line == "liquid_discharge_bc"
+                line_idx = parse_liquid_discharge_bc!(mesh, lines, line_idx + 1)
+                
+            # Parse transient liquid discharge boundary conditions
+            elseif line == "transient_liquid_discharge_bc"
+                line_idx = parse_transient_liquid_discharge_bc!(mesh, lines, line_idx + 1)
+                
+            # Parse volumetric content boundary conditions
+            elseif line == "volumetric_content_bc"
+                line_idx = parse_volumetric_content_bc!(mesh, lines, line_idx + 1)
+                
             # Parse initial concentrations
             elseif line == "initial_concentrations"
                 line_idx = parse_initial_concentrations!(mesh, lines, line_idx + 1)
@@ -142,6 +165,10 @@ function read_mesh_file(filename::String)
             # Parse initial temperature
             elseif line == "initial_temperature"
                 line_idx = parse_initial_temperature!(mesh, lines, line_idx + 1)
+                
+            # Parse initial volumetric content
+            elseif line == "initial_volumetric_content"
+                line_idx = parse_initial_volumetric_content!(mesh, lines, line_idx + 1)
                 
             # Parse materials
             elseif line == "materials"
@@ -156,6 +183,10 @@ function read_mesh_file(filename::String)
     return mesh
 end
 
+
+#------------------------------------------------------------------------------
+# MESH STRUCTURE PARSERS
+#------------------------------------------------------------------------------
 
 """
 parse_mesh_counters!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
@@ -240,6 +271,10 @@ function parse_elements!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
     return line_idx
 end
 
+
+#------------------------------------------------------------------------------
+# GAS BOUNDARY CONDITION PARSERS
+#------------------------------------------------------------------------------
 
 """
 parse_concentration_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
@@ -390,6 +425,10 @@ function parse_partial_pressure_bc!(mesh::MeshData, lines::Vector{String}, line_
 end
 
 
+#------------------------------------------------------------------------------
+# INITIAL CONDITIONS PARSERS
+#------------------------------------------------------------------------------
+
 """
 parse_initial_concentrations!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
 
@@ -464,6 +503,10 @@ function parse_initial_temperature!(mesh::MeshData, lines::Vector{String}, line_
 end
 
 
+#------------------------------------------------------------------------------
+# MATERIAL ASSIGNMENT PARSER
+#------------------------------------------------------------------------------
+
 """
 parse_materials!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
 
@@ -502,6 +545,172 @@ function parse_materials!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
     return line_idx
 end
 
+
+#------------------------------------------------------------------------------
+# LIQUID BOUNDARY CONDITION PARSERS
+#------------------------------------------------------------------------------
+
+"""
+parse_liquid_discharge_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse liquid discharge velocity boundary conditions from the mesh file.
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure to populate
+- `lines::Vector{String}`: All lines from the file
+- `line_idx::Int`: Current line index
+
+# Returns
+- `Int`: Next line index to process
+"""
+function parse_liquid_discharge_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    # Read counter
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+    
+    # Read boundary conditions
+    for _ in 1:counter
+        line = strip(lines[line_idx])
+        parts = split(line)
+        node_id = parse(Int, parts[1])
+        discharge_velocity = parse(Float64, parts[2])
+        mesh.liquid_discharge_bc[node_id] = discharge_velocity
+        line_idx += 1
+    end
+    
+    # Skip end marker
+    if strip(lines[line_idx]) == "end liquid_discharge_bc"
+        line_idx += 1
+    end
+    
+    return line_idx
+end
+
+
+"""
+parse_transient_liquid_discharge_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse transient liquid discharge velocity boundary conditions from the mesh file.
+Format: node_id num_points time1 velocity1 time2 velocity2 ...
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure to populate
+- `lines::Vector{String}`: All lines from the file
+- `line_idx::Int`: Current line index
+
+# Returns
+- `Int`: Next line index to process
+"""
+function parse_transient_liquid_discharge_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    # Read counter
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+    
+    # Read boundary conditions
+    for _ in 1:counter
+        line = strip(lines[line_idx])
+        parts = split(line)
+        node_id = parse(Int, parts[1])
+        num_points = parse(Int, parts[2])
+        
+        # Read time-velocity pairs
+        time_velocity_pairs = Tuple{Float64, Float64}[]
+        for i in 1:num_points
+            time_val = parse(Float64, parts[2 + 2*i - 1])
+            velocity_val = parse(Float64, parts[2 + 2*i])
+            push!(time_velocity_pairs, (time_val, velocity_val))
+        end
+        
+        mesh.transient_liquid_discharge_bc[node_id] = time_velocity_pairs
+        line_idx += 1
+    end
+    
+    # Skip end marker
+    if strip(lines[line_idx]) == "end transient_liquid_discharge_bc"
+        line_idx += 1
+    end
+    
+    return line_idx
+end
+
+
+"""
+parse_volumetric_content_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse volumetric content boundary conditions from the mesh file.
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure to populate
+- `lines::Vector{String}`: All lines from the file
+- `line_idx::Int`: Current line index
+
+# Returns
+- `Int`: Next line index to process
+"""
+function parse_volumetric_content_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    # Read counter
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+    
+    # Read boundary conditions
+    for _ in 1:counter
+        line = strip(lines[line_idx])
+        parts = split(line)
+        node_id = parse(Int, parts[1])
+        volumetric_content = parse(Float64, parts[2])
+        mesh.volumetric_content_bc[node_id] = volumetric_content
+        line_idx += 1
+    end
+    
+    # Skip end marker
+    if strip(lines[line_idx]) == "end volumetric_content_bc"
+        line_idx += 1
+    end
+    
+    return line_idx
+end
+
+
+"""
+parse_initial_volumetric_content!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse initial volumetric content from the mesh file.
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure to populate
+- `lines::Vector{String}`: All lines from the file
+- `line_idx::Int`: Current line index
+
+# Returns
+- `Int`: Next line index to process
+"""
+function parse_initial_volumetric_content!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    # Read counter
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+    
+    # Read initial conditions
+    for _ in 1:counter
+        line = strip(lines[line_idx])
+        parts = split(line)
+        elem_id = parse(Int, parts[1])
+        volumetric_content = parse(Float64, parts[2])
+        mesh.initial_volumetric_content[elem_id] = volumetric_content
+        line_idx += 1
+    end
+    
+    # Skip end marker
+    if strip(lines[line_idx]) == "end initial_volumetric_content"
+        line_idx += 1
+    end
+    
+    return line_idx
+end
+
+
+#------------------------------------------------------------------------------
+# MESH QUERY FUNCTIONS
+#------------------------------------------------------------------------------
 
 """
 get_element_nodes(mesh::MeshData, elem_id::Int) -> Vector{Int}
@@ -600,6 +809,11 @@ function get_node_elements(mesh::MeshData, node_id::Int)
     
     return element_list
 end
+
+
+#------------------------------------------------------------------------------
+# BOUNDARY EDGE ANALYSIS FUNCTIONS
+#------------------------------------------------------------------------------
 
 """
     has_pressure_bc(mesh::MeshData, node_id::Int) -> Bool
@@ -871,6 +1085,10 @@ function get_boundary_node_influences(mesh::MeshData)
     return influences
 end
 
+
+#------------------------------------------------------------------------------
+# EXPORTS
+#------------------------------------------------------------------------------
 
 # Export all public functions and types
 export MeshData, read_mesh_file, get_element_nodes, get_node_coordinates
