@@ -22,12 +22,14 @@ using .ADSIMVersion: get_version
 include("read_mesh.jl")
 include("read_materials.jl")
 include("read_calc_params.jl")
+include("swrc_models.jl")
 include("initialize_variables.jl")
 include("initialize_flows.jl")
 include("time_step.jl")
 include("shape_functions.jl")
 include("write_vtk.jl")
 include("fully_explicit_solver.jl")
+include("fully_explicit_solver_water.jl")
 include("write_checkpoint.jl")
 include("read_checkpoint.jl")
 
@@ -276,7 +278,20 @@ function main()
         log_print("   ✓ Number of time steps: $(time_data.num_steps)")
 
         # Step 8: Run fully explicit solver
-        final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
+        # ═══════════════════════════════════════════════════════════════════════════════════
+        # Determine which solver to use based on solver type in calc_params
+        # ═══════════════════════════════════════════════════════════════════════════════════
+        solver_type = get(calc_params["solver_settings"], "solver_type", "gas")
+        
+        if solver_type == "water"
+            log_print("\n[8/8] Running water flow solver (Richards equation)")
+            final_state = fully_explicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
+        elseif solver_type == "gas"
+            log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
+            final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
+        else
+            error("Unknown solver type: '$solver_type'. Must be 'gas' or 'water'.")
+        end
 
         # Write checkpoint file for multi-stage calculations
         log_print("\nWriting checkpoint file for stage $(current_stage)...")

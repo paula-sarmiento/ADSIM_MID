@@ -39,6 +39,15 @@ global dC_g_dt::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global dT_dt::Vector{Float64} = Float64[]
 global dC_lime_dt::Vector{Float64} = Float64[]
 
+# Water flow variables (Richards equation)
+global h::Vector{Float64} = Float64[]
+global theta_w::Vector{Float64} = Float64[]
+global S_r::Vector{Float64} = Float64[]
+global P_water::Vector{Float64} = Float64[]
+global v_water::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
+global dh_dt::Vector{Float64} = Float64[]
+global q_flux_water::Vector{Float64} = Float64[]
+
 #Analysis variables for soil carbonation
 global binder_content::Vector{Float64} = Float64[]
 global degree_of_carbonation::Vector{Float64} = Float64[]
@@ -62,6 +71,7 @@ function zero_variables!(mesh, materials)
     global C_g, P, T, v, P_boundary, λ_bc, boundary_node_influences
     global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt
+    global h, theta_w, S_r, P_water, v_water, dh_dt, q_flux_water
     
     # Set dimensions
     NDim = 2  # Number of spatial dimensions - TODO: generalize for 3D
@@ -96,6 +106,17 @@ function zero_variables!(mesh, materials)
     binder_content = zeros(Float64, Nnodes)
     degree_of_carbonation = zeros(Float64, Nnodes)
     Caco3_max = zeros(Float64, Nnodes)
+
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    # Allocate and initialize water flow variables (Richards equation)
+    # ═══════════════════════════════════════════════════════════════════════════════════
+    h = zeros(Float64, Nnodes)           # Matric head [m]
+    theta_w = zeros(Float64, Nnodes)     # Volumetric water content [-]
+    S_r = zeros(Float64, Nnodes)         # Water saturation [-]
+    P_water = zeros(Float64, Nnodes)     # Water pressure [Pa]
+    v_water = zeros(Float64, Nnodes, NDim)  # Water velocity [m/s]
+    dh_dt = zeros(Float64, Nnodes)       # Time derivative of head [m/s]
+    q_flux_water = zeros(Float64, Nnodes)  # Water flux [m/s]
 
 end
 

@@ -16,7 +16,7 @@ module WriteVTK
 
 using ..ADSIMVersion: get_version
 
-export write_vtk_file, write_vtk_series
+export write_vtk_file, write_vtk_file_water, write_vtk_series
 
 """
     write_vtk_file(
@@ -290,6 +290,87 @@ function write_vtk_vector_field(io::IO, field_name::String, data::Matrix{Float64
     end
 end
 
+"""
+    write_vtk_file_water(
+        filename::String,
+        time_step::Int,
+        time::Float64,
+        mesh,
+        matric_head::Vector{Float64},
+        water_content::Vector{Float64},
+        saturation::Vector{Float64},
+        water_pressure::Vector{Float64},
+        water_velocity::Matrix{Float64}
+    )
+
+Write VTK file for water flow simulation results at a specific time step (Richards equation).
+
+# Arguments
+- `filename::String`: Base filename (without extension) for the VTK file  
+- `time_step::Int`: Current time step number
+- `time::Float64`: Physical time value
+- `mesh`: Mesh data structure from read_mesh.jl (MeshData type)
+- `matric_head::Vector{Float64}`: Matric head h at nodes [m]
+- `water_content::Vector{Float64}`: Volumetric water content θ_w at nodes [-]
+- `saturation::Vector{Float64}`: Water saturation S_r at nodes [-]
+- `water_pressure::Vector{Float64}`: Water pressure P_w at nodes [Pa]
+- `water_velocity::Matrix{Float64}`: Water velocity vectors v_w (Nnodes × ndim) [m/s]
+
+# Returns
+- `nothing`: Writes VTU file to disk
+
+# Output
+- Writes a VTK (ASCII VTK Unstructured Grid) file compatible with ParaView
+- Contains nodal scalar fields: matric head, water content, saturation, water pressure
+- Contains nodal vector field: water velocity
+"""
+function write_vtk_file_water(
+    filename::String,
+    time_step::Int,
+    time::Float64,
+    mesh,
+    matric_head::Vector{Float64},
+    water_content::Vector{Float64},
+    saturation::Vector{Float64},
+    water_pressure::Vector{Float64},
+    water_velocity::Matrix{Float64}
+)
+    # Create output filename
+    output_file = "$(filename)_$(lpad(time_step, 6, '0')).vtk"
+    
+    # Determine mesh dimensionality
+    ndim = size(mesh.coordinates, 2)
+    Nnodes = mesh.num_nodes
+    Nelements = mesh.num_elements
+    nodes_per_element = size(mesh.elements, 2)
+    
+    open(output_file, "w") do io
+        # Write VTK header
+        println(io, "# vtk DataFile Version 3.0")
+        println(io, "ADSIM v$(get_version()) - Water Flow - Time Step $time_step, Time = $time")
+        println(io, "ASCII")
+        println(io, "DATASET UNSTRUCTURED_GRID")
+        
+        # Write mesh geometry and topology
+        write_vtk_mesh(io, mesh.coordinates, mesh.elements, Nnodes, Nelements, ndim, nodes_per_element)
+        
+        # Write point data section
+        println(io, "POINT_DATA $Nnodes")
+        
+        # Write scalar fields (water flow specific)
+        write_vtk_scalar_field(io, "Matric_Head", matric_head)
+        write_vtk_scalar_field(io, "Water_Content", water_content)
+        write_vtk_scalar_field(io, "Saturation", saturation)
+        write_vtk_scalar_field(io, "Water_Pressure", water_pressure)
+        
+        # Write velocity field (2D or 3D based on mesh)
+        write_vtk_vector_field(io, "Water_Velocity", water_velocity, ndim)
+    end
+    
+    println("      Wrote VTK file: $output_file")
+    return nothing
+end
 
 
 end # module WriteVTK
+

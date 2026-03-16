@@ -5,6 +5,7 @@
 #------------------------------------------------------------------------------
 
 using TOML
+include("swrc_models.jl")  # Import SWRC model factory
 
 """
 GasProperties
@@ -75,6 +76,17 @@ Structure to store soil material properties.
 - `swrc_cav_delta::Float64`: Cavalcante hydraulic parameter δ [F^-1 L^2]
 - `swrc_bc_air_entry_pressure::Float64`: Brooks-Corey air entry pressure ψb [L]
 - `swrc_bc_lambda::Float64`: Brooks-Corey pore size distribution index λ [-]
+- `K_sat::Float64`: Saturated hydraulic conductivity for water flow [m/s]
+- `theta_s::Float64`: Saturated water content for SWRC [-]
+- `theta_r::Float64`: Residual water content for SWRC [-]
+- `swrc_alpha::Float64`: SWRC shape parameter alpha [1/m]
+- `swrc_n::Float64`: SWRC shape parameter n for Van Genuchten [-]
+- `swrc_lambda::Float64`: SWRC pore size distribution index for Cavalcante [-]
+- `swrc_model_water::String`: SWRC model name for water flow ("Van_Genuchten" or "Cavalcante")
+- `K_h::Function`: Closure K(h) - hydraulic conductivity
+- `theta_h::Function`: Closure θ(h) - water content
+- `c_s::Function`: Closure c_s(h) - water capacity
+- `D_w::Function`: Closure D_w(h) - water diffusivity
 """
 mutable struct SoilProperties
     name::String
@@ -96,10 +108,25 @@ mutable struct SoilProperties
     swrc_cav_delta::Float64
     swrc_bc_air_entry_pressure::Float64
     swrc_bc_lambda::Float64
+    K_sat::Float64
+    theta_s::Float64
+    theta_r::Float64
+    swrc_alpha::Float64
+    swrc_n::Float64
+    swrc_lambda::Float64
+    swrc_model_water::String
+    K_h::Function
+    theta_h::Function
+    c_s::Function
+    D_w::Function
     
     function SoilProperties(name::String)
+        # Dummy closures (will be replaced if hydraulic properties are provided)
+        dummy_func = (x) -> 0.0
         new(name, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            "None", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            "None", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "None",
+            dummy_func, dummy_func, dummy_func, dummy_func)
     end
 end
 
@@ -222,6 +249,7 @@ end
 parse_soil_properties!(materials::MaterialData, soil_data::Dict)
 
 Parse soil properties from TOML data and store in MaterialData structure.
+Includes support for hydraulic properties that generate SWRC model closures.
 
 # Arguments
 - `materials::MaterialData`: Material data structure to populate
@@ -255,6 +283,55 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.swrc_cav_delta = Float64(get(soil_info, "swrc_cav_delta", 0.0))
         soil_props.swrc_bc_air_entry_pressure = Float64(get(soil_info, "swrc_bc_air_entry_pressure", 0.0))
         soil_props.swrc_bc_lambda = Float64(get(soil_info, "swrc_bc_lambda", 0.0))
+        
+        # ═══════════════════════════════════════════════════════════════════════════════════
+        # Parse water flow hydraulic properties (if provided)
+        # ═══════════════════════════════════════════════════════════════════════════════════
+        if haskey(soil_info, "hydraulic_properties")
+            hydr_props = soil_info["hydraulic_properties"]
+            
+            try
+                # Extract basic hydraulic properties
+                soil_props.K_sat = Float64(hydr_props["K_sat"])
+                soil_props.theta_s = Float64(hydr_props["theta_s"])
+                soil_props.theta_r = Float64(hydr_props["theta_r"])
+                soil_props.swrc_model_water = String(hydr_props["swrc_model"])
+                
+                # Build parameters dictionary for SWRC model
+                swrc_params = Dict{String, Float64}(
+                    "K_sat" => soil_props.K_sat,
+                    "theta_s" => soil_props.theta_s,
+                    "theta_r" => soil_props.theta_r
+                )
+                
+                # Extract model-specific parameters based on SWRC model type
+                if soil_props.swrc_model_water == "Van_Genuchten"
+                    soil_props.swrc_alpha = Float64(hydr_props["alpha"])
+                    soil_props.swrc_n = Float64(hydr_props["n_param"])
+                    swrc_params["alpha"] = soil_props.swrc_alpha
+                    swrc_params["n_param"] = soil_props.swrc_n
+                elseif soil_props.swrc_model_water == "Cavalcante"
+                    soil_props.swrc_alpha = Float64(hydr_props["alpha"])
+                    soil_props.swrc_lambda = Float64(hydr_props["lambda_param"])
+                    swrc_params["alpha"] = soil_props.swrc_alpha
+                    swrc_params["lambda_param"] = soil_props.swrc_lambda
+                else
+                    error("Unknown SWRC model for water: $(soil_props.swrc_model_water)")
+                end
+                
+                # Create SWRC closure functions
+                swrc_model = create_swrc_model(soil_props.swrc_model_water, swrc_params)
+                soil_props.K_h = swrc_model.K_h
+                soil_props.theta_h = swrc_model.theta_h
+                soil_props.c_s = swrc_model.c_s
+                soil_props.D_w = swrc_model.D_w
+                
+            catch error_obj
+                @warn "Failed to parse hydraulic properties for soil '$soil_name': $(error_obj.msg). " *
+                      "Water flow solver will not be available for this material."
+                soil_props.swrc_model_water = "None"
+            end
+        end
         
         materials.soils[soil_name] = soil_props
     end
