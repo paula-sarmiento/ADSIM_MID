@@ -24,7 +24,7 @@ SWRC (Soil Water Retention Curve) parameters need to be displayed based on the m
 ```xml
 <container n="soil_swrc" pn="Partially saturated properties">
   <value n="swrc_model" pn="SWRC Model" v="None" 
-         values="None,Van Genuchten,Cavalcante,Brook and Corey" editable="0"/>
+         values="None,Van Genuchten,Cavalcante" editable="0"/>
   <value n="anw" pn="Air-water interfacial area Anw" v="0.0"/>
   
   <!-- All parameters always visible -->
@@ -35,8 +35,6 @@ SWRC (Soil Water Retention Curve) parameters need to be displayed based on the m
   <value n="cav_n" pn="Cavalcante n [-]" v="0.0"/>
   <value n="cav_m" pn="Cavalcante m [-]" v="0.0"/>
   <value n="cav_lambda" pn="Cavalcante λ [-]" v="0.0"/>
-  <value n="bc_lambda" pn="Brook and Corey λ [-]" v="0.0"/>
-  <value n="bc_bubbling_pressure" pn="Brook and Corey ψb [F/L^2]" v="0.0"/>
 </container>
 ```
 
@@ -51,9 +49,7 @@ Soil 1 - Van Genuchten selected:
 ├─ Cavalcante α: 0.0           ← Visible but ignored
 ├─ Cavalcante n: 0.0           ← Visible but ignored
 ├─ Cavalcante m: 0.0           ← Visible but ignored
-├─ Cavalcante λ: 0.0           ← Visible but ignored
-├─ Brook and Corey λ: 0.0      ← Visible but ignored
-└─ Brook and Corey ψb: 0.0     ← Visible but ignored
+└─ Cavalcante λ: 0.0           ← Visible but ignored
 ```
 
 | Criteria | Rating | Notes |
@@ -107,7 +103,7 @@ Soil 1 - Van Genuchten selected:
 ```xml
 <container n="soil_swrc" pn="Partially saturated properties">
   <value n="swrc_model" pn="SWRC Model" v="None" 
-         values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+         values="None,Van Genuchten,Cavalcante" 
          editable="0" actualize_tree="1"/>
   
   <value n="anw" pn="Air-water interfacial area Anw" v="0.0"/>
@@ -143,8 +139,6 @@ proc ADSIM_2025::GenerateSWRCParameters { domNode args } {
         
     } elseif {$model eq "Cavalcante"} {
         # Generate Cavalcante parameters...
-    } elseif {$model eq "Brook and Corey"} {
-        # Generate Brook and Corey parameters...
     }
     
     return $result
@@ -203,7 +197,7 @@ Soil 2 - Cavalcante:
 ```xml
 <container n="soil_swrc" pn="Partially saturated properties">
   <value n="swrc_model" pn="SWRC Model" v="None" 
-         values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+         values="None,Van Genuchten,Cavalcante" 
          editable="0" icon="icon_select.png"/>
   
   <value n="anw" pn="Air-water interfacial area Anw" v="0.0"/>
@@ -233,16 +227,6 @@ Soil 2 - Cavalcante:
     <value n="cav_lambda" pn="λ [-]" v="0.0"
            help="ONLY for Cavalcante model. Leave 0.0 if not using."/>
   </container>
-  
-  <!-- Brook and Corey Container -->
-  <container n="bc_params" pn="▼ Brook and Corey Parameters" 
-             icon="folder.png" open="0"
-             help="Fill these ONLY if Brook and Corey is selected above.">
-    <value n="bc_lambda" pn="λ [-]" v="0.0"
-           help="ONLY for Brook and Corey model. Leave 0.0 if not using."/>
-    <value n="bc_bubbling_pressure" pn="ψb [F/L^2]" v="0.0"
-           help="ONLY for Brook and Corey model. Leave 0.0 if not using."/>
-  </container>
 </container>
 ```
 
@@ -256,7 +240,7 @@ Soil 1 - Van Genuchten selected:
 │  ├─ n: 1.56
 │  └─ m: 0.359
 ├─ ▶ Cavalcante Parameters          ← Collapsed, ignored
-└─ ▶ Brook and Corey Parameters     ← Collapsed, ignored
+
 ```
 
 | Criteria | Rating | Notes |
@@ -293,7 +277,7 @@ Soil 1 - Van Genuchten selected:
 ```xml
 <container n="soil_swrc" pn="Partially saturated properties">
   <value n="swrc_model" pn="SWRC Model" v="None" 
-         values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+         values="None,Van Genuchten,Cavalcante" 
          editable="0" actualize_tree="1"/>
   
   <value n="anw" pn="Air-water interfacial area Anw" v="0.0"/>
@@ -312,12 +296,6 @@ Soil 1 - Van Genuchten selected:
     <value n="cav_n" pn="n [-]" v="0.0"/>
     <value n="cav_m" pn="m [-]" v="0.0"/>
     <value n="cav_lambda" pn="λ [-]" v="0.0"/>
-  </container>
-  
-  <container n="bc_params" pn="Brook and Corey Parameters"
-             state="[ADSIM_2025::CheckSWRCModel {Brook and Corey}]">
-    <value n="bc_lambda" pn="λ [-]" v="0.0"/>
-    <value n="bc_bubbling_pressure" pn="ψb [F/L^2]" v="0.0"/>
   </container>
 </container>
 ```
@@ -356,7 +334,7 @@ Soil 1 - Van Genuchten selected:
 ```xml
 <container n="soil_swrc" pn="Partially saturated properties">
   <value n="swrc_model" pn="SWRC Model" v="None" 
-         values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+         values="None,Van Genuchten,Cavalcante" 
          editable="0" actualize_tree="1"/>
   
   <!-- All parameters visible -->
@@ -384,15 +362,11 @@ proc ADSIM::ValidateSWRCParameters { root } {
             
             # Check for values in wrong parameters
             if {$model eq "Van Genuchten"} {
-                # Check if Cavalcante or BC parameters are non-zero
+                # Check if Cavalcante parameters are non-zero
                 set cav_alpha [$first_group selectNodes {string(.//value[@n="cav_alpha"]/@v)}]
-                set bc_lambda [$first_group selectNodes {string(.//value[@n="bc_lambda"]/@v)}]
                 
                 if {$cav_alpha != "" && $cav_alpha != "0.0"} {
                     lappend warnings "$soil_name: Using Van Genuchten but Cavalcante α is non-zero ($cav_alpha)"
-                }
-                if {$bc_lambda != "" && $bc_lambda != "0.0"} {
-                    lappend warnings "$soil_name: Using Van Genuchten but Brook-Corey λ is non-zero ($bc_lambda)"
                 }
             }
             # Similar checks for other models...
@@ -482,13 +456,6 @@ proc ADSIM::ValidateSWRCParameters { root } {
     <value n="cav_m" pn="m [-]" v="0.0"/>
     <value n="cav_lambda" pn="λ [-]" v="0.0"/>
   </condition>
-  
-  <condition n="swrc_brook_corey" pn="SWRC: Brook and Corey" ov="surface" ovm="element"
-             help="Brook and Corey SWRC model.">
-    <value n="anw" pn="Air-water interfacial area Anw" v="0.0"/>
-    <value n="bc_lambda" pn="λ [-]" v="0.0"/>
-    <value n="bc_bubbling_pressure" pn="ψb [F/L^2]" v="0.0"/>
-  </condition>
 </blockdata>
 ```
 
@@ -500,7 +467,7 @@ Soil 1
    ├─ SWRC: None
    ├─ SWRC: Van Genuchten           ← User assigns this condition
    ├─ SWRC: Cavalcante
-   └─ SWRC: Brook and Corey
+
 ```
 
 User assigns appropriate SWRC condition to soil elements, only relevant parameters appear.
@@ -539,7 +506,7 @@ User assigns appropriate SWRC condition to soil elements, only relevant paramete
 ```xml
 <container n="soil_swrc" pn="Partially saturated properties">
   <value n="swrc_model" pn="SWRC Model" v="None" 
-         values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+         values="None,Van Genuchten,Cavalcante" 
          editable="0" actualize_tree="1"/>
   
   <value n="anw" pn="Air-water interfacial area Anw" v="0.0"/>
@@ -549,8 +516,6 @@ User assigns appropriate SWRC condition to soil elements, only relevant paramete
            if="[ADSIM_2025::CheckSWRCModel {Van Genuchten}]"/>
   <include path="xml/swrc_cavalcante.xml"
            if="[ADSIM_2025::CheckSWRCModel {Cavalcante}]"/>
-  <include path="xml/swrc_brookcorey.xml"
-           if="[ADSIM_2025::CheckSWRCModel {Brook and Corey}]"/>
 </container>
 ```
 

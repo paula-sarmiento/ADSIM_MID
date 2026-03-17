@@ -234,13 +234,6 @@ proc ADSIM::WriteSoilProperties { root } {
             # Cavalcante parameters
             set cav_delta [$first_group selectNodes {string(.//value[@n="cav_delta"]/@v)}]
             GiD_WriteCalculationFile puts "swrc_cav_delta = $cav_delta"
-            
-            # Brooks and Corey parameters
-            set bc_air_entry [$first_group selectNodes {string(.//value[@n="bc_air_entry_pressure"]/@v)}]
-            GiD_WriteCalculationFile puts "swrc_bc_air_entry_pressure = $bc_air_entry"
-            
-            set bc_lambda [$first_group selectNodes {string(.//value[@n="bc_lambda"]/@v)}]
-            GiD_WriteCalculationFile puts "swrc_bc_lambda = $bc_lambda"
         }
         
         GiD_WriteCalculationFile puts ""

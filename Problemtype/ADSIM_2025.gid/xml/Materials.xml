@@ -61,7 +61,7 @@
         help="Define partially saturated properties and soil water retention curve model parameters."
       >
         <value n="swrc_model" pn="SWRC Model" v="None" 
-               values="None,Van Genuchten,Cavalcante,Brook and Corey" 
+               values="None,Van Genuchten,Cavalcante" 
                editable="0"
                help="Select soil water retention curve model, then expand the matching container below to fill parameters."/>
         
@@ -85,15 +85,6 @@
           help="Cavalcante model parameters. Use ONLY if Cavalcante is selected above.">
           <value n="cav_delta" pn="Fitting hydraulic parameter δ [F^-1 L^2]" v="0.0"
                  help="Parameter proportional to the slope at saturation of the SWRC."/>
-        </container>
-        
-        <!-- Brook and Corey parameters -->
-        <container n="bc_params" pn="Brooks-Corey" icon="" open="0"
-          help="Brooks and Corey model parameters. Use ONLY if Brook and Corey is selected above.">
-          <value n="bc_air_entry_pressure" pn="Air entry pressure head ψb [L]" v="0.0"
-                 help="Pressure head at which air enters largest pores (bubbling pressure)."/>
-          <value n="bc_lambda" pn="Pore size distribution index λ [-]" v="0.0"
-                 help="Pore size distribution index."/>
         </container>
         
       </container>
