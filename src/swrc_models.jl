@@ -97,6 +97,8 @@ function create_van_genuchten_model(params::Dict{String, Float64})
     alpha   = params["alpha"]
     n       = params["n_param"]
     K_sat   = params["K_sat"]
+    K_sat_x = get(params, "K_sat_x", K_sat)  # Directional x-component [L/T], default to isotropic
+    K_sat_y = get(params, "K_sat_y", K_sat)  # Directional y-component [L/T], default to isotropic
     L       = get(params, "L_mualem", 0.5)   # Mualem exponent, default 0.5
     m       = 1.0 - 1.0 / n
 
@@ -107,6 +109,8 @@ function create_van_genuchten_model(params::Dict{String, Float64})
     alpha   <= 0.0      && error("alpha must be positive")
     n       <= 1.0      && error("n_param must be > 1.0")
     K_sat   <= 0.0      && error("K_sat must be positive")
+    K_sat_x <= 0.0      && error("K_sat_x must be positive (or omit for isotropic)")
+    K_sat_y <= 0.0      && error("K_sat_y must be positive (or omit for isotropic)")
     L       <  0.0      && error("L_mualem must be non-negative")
 
     #______________________________________________________
@@ -128,12 +132,35 @@ function create_van_genuchten_model(params::Dict{String, Float64})
     #______________________________________________________
     # Hydraulic conductivity  K(h)  — Mualem (1976)
     # K(h) = K_s S_e^L [1 − (1 − S_e^(1/m))^m]²
+    # Isotropic (returned for backward compatibility)
     #______________________________________________________
     function K_h(h)
         h >= 0.0 && return K_sat
         Se    = S_e(h)
         inner = clamp(1.0 - Se^(1.0 / m), 0.0, 1.0)
         return K_sat * Se^L * (1.0 - inner^m)^2
+    end
+
+    #______________________________________________________
+    # Hydraulic conductivity (x-direction)  K_x(h)
+    # K_x(h) = K_sat_x S_e^L [1 − (1 − S_e^(1/m))^m]²
+    #______________________________________________________
+    function K_h_x(h)
+        h >= 0.0 && return K_sat_x
+        Se    = S_e(h)
+        inner = clamp(1.0 - Se^(1.0 / m), 0.0, 1.0)
+        return K_sat_x * Se^L * (1.0 - inner^m)^2
+    end
+
+    #______________________________________________________
+    # Hydraulic conductivity (y-direction)  K_y(h)
+    # K_y(h) = K_sat_y S_e^L [1 − (1 − S_e^(1/m))^m]²
+    #______________________________________________________
+    function K_h_y(h)
+        h >= 0.0 && return K_sat_y
+        Se    = S_e(h)
+        inner = clamp(1.0 - Se^(1.0 / m), 0.0, 1.0)
+        return K_sat_y * Se^L * (1.0 - inner^m)^2
     end
 
     #______________________________________________________
@@ -194,13 +221,10 @@ function create_van_genuchten_model(params::Dict{String, Float64})
         return K_h(h) / C
     end
 
-    return (K_h=K_h, theta_h=theta_h, h_theta=h_theta, c_s=C_moist, D_w=D_w)
+    return (K_h=K_h, K_h_x=K_h_x, K_h_y=K_h_y, theta_h=theta_h, h_theta=h_theta, c_s=C_moist, D_w=D_w)
 end
 
-
 """
-    create_cavalcante_model(params::Dict{String, Float64})
-
 Cavalcante & Zornberg (2017) exponential SWRC model.
 
 # Arguments
@@ -269,6 +293,8 @@ function create_cavalcante_model(params::Dict{String, Float64})
     theta_r = params["theta_r"]
     delta   = params["delta"]
     K_sat   = params["K_sat"]
+    K_sat_x = get(params, "K_sat_x", K_sat)  # Directional x-component [L/T], default to isotropic
+    K_sat_y = get(params, "K_sat_y", K_sat)  # Directional y-component [L/T], default to isotropic
 
     #______________________________________________________
     # Validate parameter ranges
@@ -276,6 +302,8 @@ function create_cavalcante_model(params::Dict{String, Float64})
     theta_r >= theta_s && error("theta_r must be < theta_s")
     delta   <= 0.0     && error("delta must be positive")
     K_sat   <= 0.0     && error("K_sat must be positive")
+    K_sat_x <= 0.0     && error("K_sat_x must be positive (or omit for isotropic)")
+    K_sat_y <= 0.0     && error("K_sat_y must be positive (or omit for isotropic)")
 
     # Pre-compute the constant diffusivity for efficiency
     # D_w = K_s / [(θ_s − θ_r) δ]  (follows from K/C with exponential forms)
@@ -293,10 +321,29 @@ function create_cavalcante_model(params::Dict{String, Float64})
     #______________________________________________________
     # Hydraulic conductivity  K(h)
     # K(h) = K_s exp(−δ|h|)   [Cavalcante & Zornberg 2017, Eq. 14]
+    # Isotropic (returned for backward compatibility)
     #______________________________________________________
     function K_h(h)
         h >= 0.0 && return K_sat
         return K_sat * exp(-delta * abs(h))
+    end
+
+    #______________________________________________________
+    # Hydraulic conductivity (x-direction)  K_x(h)
+    # K_x(h) = K_sat_x exp(−δ|h|)   [Cavalcante & Zornberg 2017, Eq. 14]
+    #______________________________________________________
+    function K_h_x(h)
+        h >= 0.0 && return K_sat_x
+        return K_sat_x * exp(-delta * abs(h))
+    end
+
+    #______________________________________________________
+    # Hydraulic conductivity (y-direction)  K_y(h)
+    # K_y(h) = K_sat_y exp(−δ|h|)   [Cavalcante & Zornberg 2017, Eq. 14]
+    #______________________________________________________
+    function K_h_y(h)
+        h >= 0.0 && return K_sat_y
+        return K_sat_y * exp(-delta * abs(h))
     end
 
     #______________________________________________________
@@ -341,13 +388,10 @@ function create_cavalcante_model(params::Dict{String, Float64})
         return D_w_const
     end
 
-    return (K_h=K_h, theta_h=theta_h, h_theta=h_theta, c_s=C_moist, D_w=D_w)
+    return (K_h=K_h, K_h_x=K_h_x, K_h_y=K_h_y, theta_h=theta_h, h_theta=h_theta, c_s=C_moist, D_w=D_w)
 end
 
-
 """
-    create_swrc_model(model_name::String, params::Dict{String, Float64})
-
 Factory function to instantiate an SWRC model by name.
 
 # Arguments
