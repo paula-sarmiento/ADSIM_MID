@@ -94,6 +94,8 @@ mutable struct SoilProperties
     residual_water_content::Float64
     granular_tortuosity::Float64
     intrinsic_permeability::Float64
+    intrinsic_permeability_x::Float64      # Anisotropic x-direction [m²]
+    intrinsic_permeability_y::Float64      # Anisotropic y-direction [m²]
     lime_content::Float64
     residual_lime::Float64
     reaction_rate::Float64
@@ -105,6 +107,8 @@ mutable struct SoilProperties
     swrc_vg_n::Float64
     swrc_cav_delta::Float64
     K_sat::Float64
+    K_sat_x::Float64                       # Anisotropic x-direction [m/s]
+    K_sat_y::Float64                       # Anisotropic y-direction [m/s]
     theta_s::Float64
     theta_r::Float64
     swrc_model_water::String
@@ -117,9 +121,9 @@ mutable struct SoilProperties
     function SoilProperties(name::String)
         # Dummy closures (will be replaced if hydraulic properties are provided)
         dummy_func = (x) -> 0.0
-        new(name, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        new(name, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             "None", 0.0, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, "None",
+            0.0, 0.0, 0.0, 0.0, 0.0, "None",
             dummy_func, dummy_func, dummy_func, dummy_func, dummy_func)
     end
 end
@@ -232,10 +236,22 @@ Parse liquid properties from TOML data and store in MaterialData structure.
 - `liquid_data::Dict`: Dictionary containing liquid property data from TOML
 """
 function parse_liquid_properties!(materials::MaterialData, liquid_data::Dict)
-    # Read liquid properties
-    materials.liquid.dynamic_viscosity = Float64(liquid_data["dynamic_viscosity"])
-    materials.liquid.density = Float64(liquid_data["density"])
-    materials.liquid.specific_heat = Float64(liquid_data["specific_heat"])
+    # Read liquid properties with reasonable defaults if not specified (0.0)
+    # Default values match properties of water at room temperature (25°C, ~1 atm)
+    materials.liquid.dynamic_viscosity = Float64(get(liquid_data, "dynamic_viscosity", 0.0))
+    if materials.liquid.dynamic_viscosity == 0.0
+        materials.liquid.dynamic_viscosity = 1.0e-3  # Pa·s (default: water viscosity)
+    end
+    
+    materials.liquid.density = Float64(get(liquid_data, "density", 0.0))
+    if materials.liquid.density == 0.0
+        materials.liquid.density = 1000.0  # kg/m³ (default: water density)
+    end
+    
+    materials.liquid.specific_heat = Float64(get(liquid_data, "specific_heat", 0.0))
+    if materials.liquid.specific_heat == 0.0
+        materials.liquid.specific_heat = 4186.0  # J/(kg·K) (default: water specific heat)
+    end
 end
 
 
@@ -258,9 +274,12 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.specific_gravity = Float64(soil_info["specific_gravity"])
         soil_props.porosity = Float64(soil_info["porosity"])
         soil_props.saturation = Float64(soil_info["saturation"])
-        soil_props.residual_water_content = Float64(soil_info["residual_water_content"])
+        soil_props.residual_water_content = Float64(get(soil_info, "residual_water_content", 0.0))
         soil_props.granular_tortuosity = Float64(soil_info["granular_tortuosity"])
         soil_props.intrinsic_permeability = Float64(soil_info["intrinsic_permeability"])
+        # Anisotropic permeability (optional - use isotropic value as fallback)
+        soil_props.intrinsic_permeability_x = Float64(get(soil_info, "intrinsic_permeability_x", 0.0))
+        soil_props.intrinsic_permeability_y = Float64(get(soil_info, "intrinsic_permeability_y", 0.0))
         soil_props.lime_content = Float64(soil_info["lime_content"])
         soil_props.residual_lime = Float64(soil_info["residual_lime"])
         soil_props.reaction_rate = Float64(get(soil_info, "lime_reaction_rate", 0.0))
@@ -277,36 +296,45 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.swrc_cav_delta = Float64(get(soil_info, "swrc_cav_delta", 0.0))
         
         # ═══════════════════════════════════════════════════════════════════════════════════
-        # Parse water flow hydraulic properties (if provided)
+        # Initialize water flow hydraulic properties (computed at runtime)
+        # K_sat will be computed in kernel.jl after gravity is loaded
+        # SWRC closures created here for reference, but K_sat=0 until runtime computation
         # ═══════════════════════════════════════════════════════════════════════════════════
-        if haskey(soil_info, "hydraulic_properties")
-            hydr_props = soil_info["hydraulic_properties"]
-            
+        
+        # Determine if water flow is active for this soil
+        if soil_props.swrc_model != "None"
             try
-                # Extract basic hydraulic properties
-                soil_props.K_sat = Float64(hydr_props["K_sat"])
-                soil_props.theta_s = Float64(hydr_props["theta_s"])
-                soil_props.theta_r = Float64(hydr_props["theta_r"])
-                soil_props.swrc_model_water = String(hydr_props["swrc_model"])
+                # Extract SWRC model designation
+                soil_props.swrc_model_water = soil_props.swrc_model
+                
+                # Derive SWRC parameters from basic soil properties
+                soil_props.theta_s = soil_props.porosity           # saturated water content = porosity
+                soil_props.theta_r = soil_props.residual_water_content  # residual water content
+                
+                # K_sat will be computed at runtime: K_sat = (k * rho_w * g) / mu_w
+                # Placeholder value (will be updated in kernel.jl)
+                soil_props.K_sat = 0.0
                 
                 # Build parameters dictionary for SWRC model
                 swrc_params = Dict{String, Float64}(
-                    "K_sat" => soil_props.K_sat,
+                    "K_sat" => 1.0,  # Temporary: actual K_sat computed at runtime
                     "theta_s" => soil_props.theta_s,
                     "theta_r" => soil_props.theta_r
                 )
                 
                 # Extract model-specific parameters based on SWRC model type
                 if soil_props.swrc_model_water == "Van_Genuchten"
-                    swrc_params["alpha"] = Float64(hydr_props["alpha"])
-                    swrc_params["n_param"] = Float64(hydr_props["n_param"])
+                    swrc_params["alpha"] = soil_props.swrc_vg_alpha
+                    swrc_params["n_param"] = soil_props.swrc_vg_n
                 elseif soil_props.swrc_model_water == "Cavalcante"
-                    swrc_params["delta"] = Float64(hydr_props["delta"])
+                    swrc_params["delta"] = soil_props.swrc_cav_delta
                 else
-                    error("Unknown SWRC model for water: $(soil_props.swrc_model_water)")
+                    @warn "Unknown SWRC model for water '$soil_props.swrc_model_water' in soil '$soil_name'. " *
+                          "Water flow solver will not be available for this material."
+                    soil_props.swrc_model_water = "None"
                 end
                 
-                # Create SWRC closure functions
+                # Create SWRC closure functions (with temporary K_sat)
                 swrc_model = create_swrc_model(soil_props.swrc_model_water, swrc_params)
                 soil_props.K_h = swrc_model.K_h
                 soil_props.theta_h = swrc_model.theta_h
@@ -315,10 +343,12 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
                 soil_props.D_w = swrc_model.D_w
                 
             catch error_obj
-                @warn "Failed to parse hydraulic properties for soil '$soil_name': $(string(error_obj)). " *
+                @warn "Failed to initialize SWRC properties for soil '$soil_name': $(string(error_obj)). " *
                       "Water flow solver will not be available for this material."
                 soil_props.swrc_model_water = "None"
             end
+        else
+            soil_props.swrc_model_water = "None"
         end
         
         materials.soils[soil_name] = soil_props
@@ -490,8 +520,65 @@ function validate_swrc_parameters(materials::MaterialData)
 end
 
 
+"""
+compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
+
+Compute saturated hydraulic conductivity K_sat for all soils at runtime,
+after gravity and liquid properties are known.
+
+K_sat = (k_intrinsic * ρ_water * g) / μ_water
+
+# Arguments
+- `materials::MaterialData`: Material data structure
+- `calc_params::Dict`: Calculation parameters (contains gravity magnitude)
+
+# Notes
+This must be called after read_materials_file and after calc_params are loaded,
+since K_sat depends on both intrinsic permeability (from materials) and gravity 
+(from calculation parameters).
+"""
+function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
+    # Get gravitational acceleration
+    g = calc_params["gravity"]["magnitude"]
+    
+    # Get liquid properties
+    rho_w = materials.liquid.density  # [kg/m³]
+    mu_w = materials.liquid.dynamic_viscosity  # [Pa·s]
+    
+    # Loop through all soils and compute K_sat
+    for (soil_name, soil) in materials.soils
+        # Always compute K_sat - it's a fundamental property of the soil
+        # Isotropic case (default)
+        k_intrinsic = soil.intrinsic_permeability  # [m²]
+        
+        if k_intrinsic > 0.0
+            soil.K_sat = (k_intrinsic * rho_w * g) / mu_w  # [m/s]
+        else
+            # Default fallback for zero or missing intrinsic permeability
+            soil.K_sat = 1.0e-7
+        end
+        
+        # Anisotropic case: compute directional K_sat values
+        k_intrinsic_x = soil.intrinsic_permeability_x  # [m²]
+        k_intrinsic_y = soil.intrinsic_permeability_y  # [m²]
+        
+        if k_intrinsic_x > 0.0
+            soil.K_sat_x = (k_intrinsic_x * rho_w * g) / mu_w  # [m/s]
+        else
+            soil.K_sat_x = soil.K_sat  # Use isotropic value as fallback
+        end
+        
+        if k_intrinsic_y > 0.0
+            soil.K_sat_y = (k_intrinsic_y * rho_w * g) / mu_w  # [m/s]
+        else
+            soil.K_sat_y = soil.K_sat  # Use isotropic value as fallback
+        end
+    end
+end
+
+
 # Export all public functions and types
 export MaterialData, GasProperties, LiquidProperties, SoilProperties
 export read_materials_file, get_gas_properties, get_soil_properties
 export get_num_gases, get_num_soils, get_liquid_properties
-export validate_swrc_parameters
+export validate_swrc_parameters, compute_K_sat_runtime!

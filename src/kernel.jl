@@ -163,6 +163,9 @@ function main()
         log_print(log_analysis_type(calc_params["solver_settings"]))
         log_print("   ✓ Total simulation time: $(calc_params["time_stepping"]["total_simulation_time"]) $(calc_params["units"]["time_unit"])")
 
+        # Step 3.1: Compute K_sat for soils with water flow (depends on gravity)
+        compute_K_sat_runtime!(materials, calc_params)
+
         # Step 3.5: Validate reaction kinetics requirements
         if calc_params["solver_settings"]["reaction_kinetics"] == 1
             log_print("\nValidating reaction kinetics requirements")

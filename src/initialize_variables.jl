@@ -338,6 +338,135 @@ end
 
 
 """
+    apply_initial_water_conditions!(mesh::MeshData, materials)
+
+Apply initial water conditions from mesh data to global water variables.
+Handles both volumetric content (θ) and pressure head (h) specifications.
+If pressure head is specified, converts h → θ via SWRC model.
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure containing initial water condition data
+- `materials`: Material data structure containing SWRC model closures
+
+# Note
+- Modifies global variables: `theta_w`, `h`
+- Prioritizes initial_volumetric_content if both options are present for same element
+- Uses h→θ conversion via SWRC inversion if initial_pressure_head is specified
+"""
+function apply_initial_water_conditions!(mesh, materials)
+    global theta_w, h, Nnodes
+    
+    # Loop through all elements
+    for elem_id in 1:mesh.num_elements
+        # Get material index for this element
+        material_idx = get_element_material(mesh, elem_id)
+        
+        if material_idx !== nothing
+            # Get the soil name from the soil dictionary
+            soil_name = materials.soil_dictionary[material_idx]
+            soil_props = get_soil_properties(materials, soil_name)
+            
+            if soil_props !== nothing && haskey(soil_props, :swrc_model)
+                swrc = soil_props.swrc_model
+                
+                # Get nodes of this element
+                element_nodes = get_element_nodes(mesh, elem_id)
+                
+                # Determine water state from mesh specifications
+                theta_value = nothing
+                h_value = nothing
+                
+                # Priority: CHECK volumetric content first
+                if haskey(mesh.initial_volumetric_content, elem_id)
+                    theta_value = mesh.initial_volumetric_content[elem_id]
+                # Then check pressure head
+                elseif haskey(mesh.initial_pressure_head, elem_id)
+                    h_value = mesh.initial_pressure_head[elem_id]
+                    # Convert h → θ via SWRC inversion
+                    theta_value = swrc.h_theta(h_value)
+                else
+                    # Default to saturated if not specified
+                    theta_value = soil_props.porosity
+                end
+                
+                # Apply to all nodes of the element
+                if theta_value !== nothing
+                    for node_id in element_nodes
+                        theta_w[node_id] = theta_value
+                        # Also recover h for diagnostics
+                        h[node_id] = swrc.h_theta_inverse(theta_w[node_id])
+                    end
+                end
+            end
+        end
+    end
+end
+
+
+"""
+    apply_water_dirichlet_bc!(mesh::MeshData, materials)
+
+Apply water Dirichlet boundary conditions from mesh data.
+Handles both volumetric content (θ) and pressure head (h) specifications.
+If pressure head is specified, converts h → θ via SWRC model.
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure containing water BC data
+- `materials`: Material data structure containing SWRC model closures
+
+# Note
+- Stores BC values in global `theta_w` for later enforcement during solver
+- Prioritizes volumetric_content_bc if both options are present for same node
+"""
+function apply_water_dirichlet_bc!(mesh, materials)
+    global theta_w, h
+    
+    # Helper function: find node's material (use first adjacent element's material)
+    function get_node_material_bc(mesh_data, node_id)
+        for elem_id in 1:mesh_data.num_elements
+            element_nodes = get_element_nodes(mesh_data, elem_id)
+            if node_id in element_nodes
+                return get_element_material(mesh_data, elem_id)
+            end
+        end
+        return nothing
+    end
+    
+    # Loop through pressure head BCs (if specified)
+    for (node_id, h_bc) in mesh.pressure_head_bc
+        material_idx = get_node_material_bc(mesh, node_id)
+        
+        if material_idx !== nothing
+            soil_name = materials.soil_dictionary[material_idx]
+            soil_props = get_soil_properties(materials, soil_name)
+            
+            if soil_props !== nothing && haskey(soil_props, :swrc_model)
+                swrc = soil_props.swrc_model
+                # Convert prescribed h → θ and store (will be enforced after solver)
+                theta_w[node_id] = swrc.h_theta(h_bc)
+                h[node_id] = h_bc
+            end
+        end
+    end
+    
+    # Loop through volumetric content BCs (if specified)
+    for (node_id, theta_bc) in mesh.volumetric_content_bc
+        theta_w[node_id] = theta_bc
+        # Recover h from θ
+        material_idx = get_node_material_bc(mesh, node_id)
+        if material_idx !== nothing
+            soil_name = materials.soil_dictionary[material_idx]
+            soil_props = get_soil_properties(materials, soil_name)
+            if soil_props !== nothing && haskey(soil_props, :swrc_model)
+                swrc = soil_props.swrc_model
+                h[node_id] = swrc.h_theta_inverse(theta_bc)
+            end
+        end
+    end
+end
+
+
+"""
     apply_all_initial_conditions!(mesh::MeshData, materials)
 
 Apply all initial conditions and boundary conditions from mesh and material data.
@@ -348,7 +477,7 @@ This is a convenience function that calls all individual application functions.
 - `materials`: Material data structure containing soil and gas properties
 
 # Note
-- Modifies global variables: `C_g`, `T`, `P`, `C_lime`
+- Modifies global variables: `C_g`, `T`, `P`, `C_lime`, `theta_w`, `h`
 - Call this after `zero_variables!()` to set up the initial state
 """
 function apply_all_initial_conditions!(mesh, materials)
@@ -358,6 +487,8 @@ function apply_all_initial_conditions!(mesh, materials)
     apply_partial_pressure_bc!(mesh)
     apply_pressure_bc!(mesh)
     apply_initial_lime_concentration!(mesh, materials)
+    apply_initial_water_conditions!(mesh, materials)
+    apply_water_dirichlet_bc!(mesh, materials)
     
     println("\nAll initial conditions and BCs applied successfully")
 end
