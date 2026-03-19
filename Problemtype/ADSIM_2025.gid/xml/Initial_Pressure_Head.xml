@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?><!-- -*- coding: utf-8; mode: SGML -*- -->
+
+<condition n="Initial_Pressure_Head" pn="Initial pressure head" icon="icon_drop.png" ov="surface" ovm="element" help="Set initial pressure head h at t=0. Negative values for unsaturated, zero or positive for saturated.">
+  <value n="initial_pressure_head" pn="Initial pressure head h [m]" v="0.0" help="Initial pressure head in meters (can be negative for unsaturated zone). Negative is typical for soil."/>
+</condition>

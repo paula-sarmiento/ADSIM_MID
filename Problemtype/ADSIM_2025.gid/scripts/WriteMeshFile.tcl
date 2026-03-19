@@ -50,6 +50,9 @@ proc ADSIM::WriteMeshFile { filename } {
     # Write volumetric content boundary conditions
     ADSIM::WriteMeshVolumetricContentBC $root
     
+    # Write pressure head boundary conditions
+    ADSIM::WriteMeshPressureHeadBC $root
+    
     # Write initial gas concentrations
     ADSIM::WriteMeshInitialConcentrations $root
     
@@ -58,6 +61,9 @@ proc ADSIM::WriteMeshFile { filename } {
     
     # Write initial volumetric content
     ADSIM::WriteMeshInitialVolumetricContent $root
+    
+    # Write initial pressure head
+    ADSIM::WriteMeshInitialPressureHead $root
     
     # Write material assignation
     ADSIM::WriteMeshMaterials $root
@@ -580,4 +586,62 @@ proc ADSIM::WriteMeshMaterials { root } {
     GiD_WriteCalculationFile puts $counter
     GiD_WriteCalculationFile elements $formats
     GiD_WriteCalculationFile puts "end materials"    
+}
+
+#===============================================================================
+# Write pressure head boundary conditions
+#===============================================================================
+proc ADSIM::WriteMeshPressureHeadBC { root } {
+    GiD_WriteCalculationFile puts "pressure_head_bc"
+
+    # Line conditions
+    set ov_type "line"
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Pressure_Head"]/group[@ov=%s]} $ov_type]
+    set formats ""
+
+    foreach gNode [$root selectNodes $xp] {
+        set v1 [$gNode selectNodes {string(value[@n="pressure_head"]/@v)}]
+        dict set formats [$gNode @n] "%d $v1\n"
+    }
+
+    # Point conditions
+    set ov_type "point"
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Pressure_Head"]/group[@ov=%s]} $ov_type]
+    
+    foreach gNode [$root selectNodes $xp] {
+        set v1 [$gNode selectNodes {string(value[@n="pressure_head"]/@v)}]
+        dict set formats [$gNode @n] "%d $v1\n"
+    }
+
+    # Add a counter 
+    set counter [GiD_WriteCalculationFile nodes -count $formats]
+    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile nodes $formats
+    GiD_WriteCalculationFile puts "end pressure_head_bc"
+    GiD_WriteCalculationFile puts ""
+}
+
+#===============================================================================
+# Write initial pressure head conditions
+#===============================================================================
+proc ADSIM::WriteMeshInitialPressureHead { root } {
+    GiD_WriteCalculationFile puts "initial_pressure_head"
+
+    # Surface conditions (applied to elements)
+    set ov_type "surface"
+    set xp [format_xpath {//container[@n="initial_conditions"]/condition[@n="Initial_Pressure_Head"]/group[@ov=%s]} $ov_type]
+    set formats ""
+
+    foreach gNode [$root selectNodes $xp] {
+        set v1 [$gNode selectNodes {string(value[@n="initial_pressure_head"]/@v)}]
+        #write elements with values
+        dict set formats [$gNode @n] "%d $v1\n"
+    }
+
+    # Add a counter 
+    set counter [GiD_WriteCalculationFile elements -count $formats]
+    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile elements $formats
+    GiD_WriteCalculationFile puts "end initial_pressure_head"
+    GiD_WriteCalculationFile puts ""
 }
