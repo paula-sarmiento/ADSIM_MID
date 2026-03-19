@@ -45,6 +45,8 @@
       <value n="saturation_" pn="Saturation [-]" v="0.0"/>
       <value n="granular_tortuosity_" pn="Granular tortuosity [-]" v="0.0"/>
       <value n="intrinsic_permeabiliy_" pn="Intrinsic permeability [L^2]" v="0.0"/>
+      <value n="intrinsic_permeability_x" pn="Intrinsic permeability X (Horizontal) [L^2]" v="0.0" help="Optional: Horizontal intrinsic permeability for anisotropic soils. Leave 0 to use isotropic value."/>
+      <value n="intrinsic_permeability_y" pn="Intrinsic permeability Y (Vertical) [L^2]" v="0.0" help="Optional: Vertical intrinsic permeability for anisotropic soils. Leave 0 to use isotropic value."/>
       <value n="residual_water_content_" pn="Residual volumetric water content [-]" v="0.0"/>
       <value n="lime_content_" pn="Lime content [-]" v="0.0" help="Defined as a fraction of the weight of solids."/>
       <value n="lime_impure_" pn="Residual lime content [-]" v="0.0" help="Defined as a fraction of the lime content."/>

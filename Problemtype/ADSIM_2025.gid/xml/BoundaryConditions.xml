@@ -12,5 +12,6 @@
     <include path="xml/Volumetric_Content_BC.xml"/>
     <include path="xml/Liquid_Flow_BC.xml"/>
     <include path="xml/Transient_Liquid_Flow_BC.xml"/>
+    <include path="xml/Pressure_Head_BC.xml"/>
   </container>
 </container>

@@ -4,6 +4,7 @@
   <include path="xml/InitialConcentrations.xml"/>
   <include path="xml/InitialTemperature.xml"/> 
   <include path="xml/InitialVolumetricContent.xml"/>
+  <include path="xml/Initial_Pressure_Head.xml"/>
   <!-- <include path="xml/InitialFlow.xml"/>  Needs implementation-->
   <!-- <include path="xml/InitialPressure.xml"/>  Needs implementation-->
 </container>
