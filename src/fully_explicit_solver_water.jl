@@ -2,7 +2,7 @@
 # ADSIM: Advection-Diffusion for Soil Improvement and 
 # Modification
 # v0.x.x
-# Author: Luis Zambrano-Cruzatty
+# Author: Paula Sarmiento
 #______________________________________________________
 
 #______________________________________________________

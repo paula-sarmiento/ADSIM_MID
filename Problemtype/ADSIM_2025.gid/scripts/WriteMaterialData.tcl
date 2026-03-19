@@ -11,6 +11,25 @@ proc ADSIM::WriteMaterialData { filename } {
     # Get root of XML tree
     set root [$::gid_groups_conds::doc documentElement]
     
+    # Extract liquid properties ONCE (reuse for both [liquid] section and K_sat computation)
+    set xp_liquid {//container[@n="materials"]/container[@n="m_liquid"]}
+    set liquid_container [$root selectNodes $xp_liquid]
+    
+    set liquid_props(dyn_visc) 1.0e-3
+    set liquid_props(density) 1000.0
+    
+    if {$liquid_container != ""} {
+        set temp_visc [$liquid_container selectNodes {string(value[@n="Dynamic_viscosity_"]/@v)}]
+        set temp_dens [$liquid_container selectNodes {string(value[@n="density_"]/@v)}]
+        
+        if {$temp_visc != "" && $temp_visc != "0.0"} { 
+            set liquid_props(dyn_visc) $temp_visc
+        }
+        if {$temp_dens != "" && $temp_dens != "0.0"} {
+            set liquid_props(density) $temp_dens
+        }
+    }
+    
     # Write header
     ADSIM::WriteMaterialHeader
     
@@ -22,11 +41,11 @@ proc ADSIM::WriteMaterialData { filename } {
     # Write gas properties
     ADSIM::WriteGasProperties $root
     
-    # Write liquid properties
-    ADSIM::WriteLiquidProperties $root
+    # Write liquid properties (pass extracted values)
+    ADSIM::WriteLiquidProperties $root liquid_props
     
-    # Write soil properties
-    ADSIM::WriteSoilProperties $root
+    # Write soil properties (pass extracted liquid properties for K_sat computation)
+    ADSIM::WriteSoilProperties $root liquid_props
     
     # Close the file
     GiD_WriteCalculationFile end
@@ -100,31 +119,29 @@ proc ADSIM::WriteGasProperties { root } {
 }
 
 #===============================================================================
-# Write liquid properties
+# Write liquid properties (using pre-extracted values)
 #===============================================================================
-proc ADSIM::WriteLiquidProperties { root } {
-    # Get liquid properties container
+proc ADSIM::WriteLiquidProperties { root liquid_props_array } {
+    upvar $liquid_props_array liquid_props
+    
+    # Get liquid container to fetch specific heat (only this is not pre-extracted)
     set xp_liquid {//container[@n="materials"]/container[@n="m_liquid"]}
     set liquid_container [$root selectNodes $xp_liquid]
-    
-    if {$liquid_container == ""} {
-        return
-    }
     
     GiD_WriteCalculationFile puts "# Liquid properties"
     GiD_WriteCalculationFile puts "\[liquid\]"
     
-    # Dynamic viscosity
-    set dyn_visc [$liquid_container selectNodes {string(value[@n="Dynamic_viscosity_"]/@v)}]
-    GiD_WriteCalculationFile puts "dynamic_viscosity = $dyn_visc"
-    
-    # Density
-    set density [$liquid_container selectNodes {string(value[@n="density_"]/@v)}]
-    GiD_WriteCalculationFile puts "density = $density"
+    # Use pre-extracted properties
+    GiD_WriteCalculationFile puts "dynamic_viscosity = $liquid_props(dyn_visc)"
+    GiD_WriteCalculationFile puts "density = $liquid_props(density)"
     
     # Specific heat
-    set spec_heat [$liquid_container selectNodes {string(value[@n="specific_heat_water_"]/@v)}]
-    GiD_WriteCalculationFile puts "specific_heat = $spec_heat"
+    if {$liquid_container != ""} {
+        set spec_heat [$liquid_container selectNodes {string(value[@n="specific_heat_water_"]/@v)}]
+        GiD_WriteCalculationFile puts "specific_heat = $spec_heat"
+    } else {
+        GiD_WriteCalculationFile puts "specific_heat = 0.0"
+    }
     
     GiD_WriteCalculationFile puts ""
 }
@@ -153,9 +170,11 @@ proc ADSIM::WriteSoilDictionary { root } {
 }
 
 #===============================================================================
-# Write soil properties
+# Write soil properties (using pre-extracted liquid properties for K_sat)
 #===============================================================================
-proc ADSIM::WriteSoilProperties { root } {
+proc ADSIM::WriteSoilProperties { root liquid_props_array } {
+    upvar $liquid_props_array liquid_props
+    
     # Get all soil materials
     set xp_soils {//container[@n="materials"]/container[@n="m_soil"]/blockdata}
     set soil_blocks [$root selectNodes $xp_soils]
@@ -234,6 +253,34 @@ proc ADSIM::WriteSoilProperties { root } {
             # Cavalcante parameters
             set cav_delta [$first_group selectNodes {string(.//value[@n="cav_delta"]/@v)}]
             GiD_WriteCalculationFile puts "swrc_cav_delta = $cav_delta"
+            
+            # Write hydraulic_properties subsection for SWRC model
+            GiD_WriteCalculationFile puts ""
+            GiD_WriteCalculationFile puts "\[soil.\"$soil_name\".hydraulic_properties\]"
+            
+            # Map physical properties to SWRC parameters
+            GiD_WriteCalculationFile puts "swrc_model = \"$swrc_model\""
+            GiD_WriteCalculationFile puts "theta_s = $porosity"
+            GiD_WriteCalculationFile puts "theta_r = $res_water"
+            
+            # Compute K_sat from intrinsic permeability
+            # K_sat = (k * rho * g) / mu
+            # where: k=intrinsic_permeability [m^2], rho=density [kg/m^3], g=9.81 [m/s^2], mu=dynamic_viscosity [Pa·s]
+            set g 9.81
+            if {$perm != "" && $perm != "0.0"} {
+                set k_sat [expr {($perm * $liquid_props(density) * $g) / $liquid_props(dyn_visc)}]
+            } else {
+                set k_sat 1.0e-5
+            }
+            GiD_WriteCalculationFile puts "K_sat = $k_sat"
+            
+            # Write SWRC fitting parameters
+            if {$swrc_model eq "Van_Genuchten"} {
+                GiD_WriteCalculationFile puts "alpha = $vg_alpha"
+                GiD_WriteCalculationFile puts "n_param = $vg_n"
+            } elseif {$swrc_model eq "Cavalcante"} {
+                GiD_WriteCalculationFile puts "delta = $cav_delta"
+            }
         }
         
         GiD_WriteCalculationFile puts ""

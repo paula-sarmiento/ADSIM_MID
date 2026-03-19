@@ -194,7 +194,7 @@ function create_van_genuchten_model(params::Dict{String, Float64})
         return K_h(h) / C
     end
 
-    return (K_h=K_h, theta_h=theta_h, h_theta=h_theta, C_moist=C_moist, D_w=D_w)
+    return (K_h=K_h, theta_h=theta_h, h_theta=h_theta, c_s=C_moist, D_w=D_w)
 end
 
 
@@ -341,7 +341,7 @@ function create_cavalcante_model(params::Dict{String, Float64})
         return D_w_const
     end
 
-    return (K_h=K_h, theta_h=theta_h, h_theta=h_theta, C_moist=C_moist, D_w=D_w)
+    return (K_h=K_h, theta_h=theta_h, h_theta=h_theta, c_s=C_moist, D_w=D_w)
 end
 
 

@@ -68,20 +68,18 @@ Structure to store soil material properties.
 - `residual_lime::Float64`: Residual lime [-]
 - `reaction_rate::Float64`: Chemical reaction rate [1/s]
 - `specific_heat_solids::Float64`: Specific heat of solids [J/(kg·K)]
-- `swrc_model::String`: SWRC model selection ("None", "Van Genuchten", "Cavalcante", "Brook and Corey")
+- `swrc_model::String`: SWRC model selection ("None", "Van Genuchten", "Cavalcante")
 - `swrc_max_anw::Float64`: Maximum air-water interfacial area [L^-1]
 - `swrc_saturation_max_anw::Float64`: Saturation at maximum anw [-]
 - `swrc_vg_alpha::Float64`: Van Genuchten fitting parameter α [L^-1]
 - `swrc_vg_n::Float64`: Van Genuchten fitting parameter n [-]
 - `swrc_cav_delta::Float64`: Cavalcante hydraulic parameter δ [F^-1 L^2]
-- `swrc_bc_air_entry_pressure::Float64`: Brooks-Corey air entry pressure ψb [L]
-- `swrc_bc_lambda::Float64`: Brooks-Corey pore size distribution index λ [-]
 - `K_sat::Float64`: Saturated hydraulic conductivity for water flow [m/s]
 - `theta_s::Float64`: Saturated water content for SWRC [-]
 - `theta_r::Float64`: Residual water content for SWRC [-]
-- `swrc_alpha::Float64`: SWRC shape parameter alpha [1/m]
-- `swrc_n::Float64`: SWRC shape parameter n for Van Genuchten [-]
-- `swrc_lambda::Float64`: SWRC pore size distribution index for Cavalcante [-]
+- `swrc_vg_alpha::Float64`: Van Genuchten fitting parameter α [1/m]
+- `swrc_vg_n::Float64`: Van Genuchten fitting parameter n for Van Genuchten [-]
+- `swrc_cav_delta::Float64`: Cavalcante fitting parameter δ [1/m]
 - `swrc_model_water::String`: SWRC model name for water flow ("Van_Genuchten" or "Cavalcante")
 - `K_h::Function`: Closure K(h) - hydraulic conductivity
 - `theta_h::Function`: Closure θ(h) - water content
@@ -106,17 +104,13 @@ mutable struct SoilProperties
     swrc_vg_alpha::Float64
     swrc_vg_n::Float64
     swrc_cav_delta::Float64
-    swrc_bc_air_entry_pressure::Float64
-    swrc_bc_lambda::Float64
     K_sat::Float64
     theta_s::Float64
     theta_r::Float64
-    swrc_alpha::Float64
-    swrc_n::Float64
-    swrc_lambda::Float64
     swrc_model_water::String
     K_h::Function
     theta_h::Function
+    h_theta::Function
     c_s::Function
     D_w::Function
     
@@ -124,9 +118,9 @@ mutable struct SoilProperties
         # Dummy closures (will be replaced if hydraulic properties are provided)
         dummy_func = (x) -> 0.0
         new(name, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            "None", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "None",
-            dummy_func, dummy_func, dummy_func, dummy_func)
+            "None", 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, "None",
+            dummy_func, dummy_func, dummy_func, dummy_func, dummy_func)
     end
 end
 
@@ -281,8 +275,6 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.swrc_vg_alpha = Float64(get(soil_info, "swrc_vg_alpha", 0.0))
         soil_props.swrc_vg_n = Float64(get(soil_info, "swrc_vg_n", 0.0))
         soil_props.swrc_cav_delta = Float64(get(soil_info, "swrc_cav_delta", 0.0))
-        soil_props.swrc_bc_air_entry_pressure = Float64(get(soil_info, "swrc_bc_air_entry_pressure", 0.0))
-        soil_props.swrc_bc_lambda = Float64(get(soil_info, "swrc_bc_lambda", 0.0))
         
         # ═══════════════════════════════════════════════════════════════════════════════════
         # Parse water flow hydraulic properties (if provided)
@@ -306,15 +298,10 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
                 
                 # Extract model-specific parameters based on SWRC model type
                 if soil_props.swrc_model_water == "Van_Genuchten"
-                    soil_props.swrc_alpha = Float64(hydr_props["alpha"])
-                    soil_props.swrc_n = Float64(hydr_props["n_param"])
-                    swrc_params["alpha"] = soil_props.swrc_alpha
-                    swrc_params["n_param"] = soil_props.swrc_n
+                    swrc_params["alpha"] = Float64(hydr_props["alpha"])
+                    swrc_params["n_param"] = Float64(hydr_props["n_param"])
                 elseif soil_props.swrc_model_water == "Cavalcante"
-                    soil_props.swrc_alpha = Float64(hydr_props["alpha"])
-                    soil_props.swrc_lambda = Float64(hydr_props["lambda_param"])
-                    swrc_params["alpha"] = soil_props.swrc_alpha
-                    swrc_params["lambda_param"] = soil_props.swrc_lambda
+                    swrc_params["delta"] = Float64(hydr_props["delta"])
                 else
                     error("Unknown SWRC model for water: $(soil_props.swrc_model_water)")
                 end
@@ -323,11 +310,12 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
                 swrc_model = create_swrc_model(soil_props.swrc_model_water, swrc_params)
                 soil_props.K_h = swrc_model.K_h
                 soil_props.theta_h = swrc_model.theta_h
+                soil_props.h_theta = swrc_model.h_theta
                 soil_props.c_s = swrc_model.c_s
                 soil_props.D_w = swrc_model.D_w
                 
             catch error_obj
-                @warn "Failed to parse hydraulic properties for soil '$soil_name': $(error_obj.msg). " *
+                @warn "Failed to parse hydraulic properties for soil '$soil_name': $(string(error_obj)). " *
                       "Water flow solver will not be available for this material."
                 soil_props.swrc_model_water = "None"
             end
@@ -486,20 +474,6 @@ function validate_swrc_parameters(materials::MaterialData)
                     """)
                 end
             
-            # Validate Brooks-Corey model
-            elseif soil.swrc_model == "Brook and Corey"
-                if soil.swrc_bc_air_entry_pressure <= 0.0 || soil.swrc_bc_lambda <= 0.0
-                    error("""
-                    SWRC Validation Error: '$soil_name' uses Brook and Corey model but parameters are invalid.
-                    
-                    Required parameters for Brook and Corey model:
-                    - swrc_bc_air_entry_pressure > 0 (current: $(soil.swrc_bc_air_entry_pressure))
-                    - swrc_bc_lambda > 0 (current: $(soil.swrc_bc_lambda))
-                    
-                    Please verify the SWRC parameters in your materials definition.
-                    """)
-                end
-            
             else
                 error("""
                 SWRC Validation Error: '$soil_name' has unknown SWRC model: '$(soil.swrc_model)'
@@ -508,7 +482,6 @@ function validate_swrc_parameters(materials::MaterialData)
                 - "None"
                 - "Van Genuchten"
                 - "Cavalcante"
-                - "Brook and Corey"
                 """)
             end
         end
