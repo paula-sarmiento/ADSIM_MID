@@ -11,13 +11,18 @@ using LinearAlgebra
 # Global flow variables - shared across all modules
 #------------------------------------------------------------------------------
 
-# Flow vectors for each gas species (Nnodes × NGases)
+# Gas flow vectors for each gas species (Nnodes × NGases)
 # Each flow type contributes to the total concentration change
 global q_advection::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global q_gravitational::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global q_diffusion::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global q_boundary::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global q_source_sink::Vector{Float64} = Float64[]  # Only for CO2
+
+# Water flow vectors for Richards equation (Nnodes)
+# Flows per node for water phase
+global q_flux_water::Vector{Float64} = Float64[]
+global q_boundary_water::Vector{Float64} = Float64[]
 
 # Boundary edge geometry - precomputed during initialization
 # Each tuple contains: (element_id, node_i, node_j, edge_length, outward_normal)
@@ -129,6 +134,64 @@ function calculate_boundary_influence_lengths(mesh)
 end
 
 #------------------------------------------------------------------------------
+# Water solver boundary flow conditions
+#------------------------------------------------------------------------------
+"""
+    apply_boundary_flows_water!(mesh, q_boundary_water, boundary_node_influences)
+
+Apply uniform flow boundary conditions for water solver to q_boundary array.
+Water boundary fluxes are read from mesh data and weighted by nodal influence lengths.
+
+# Arguments
+- `mesh::MeshData`: Mesh data containing uniform_flow_bc
+- `q_boundary_water::Vector{Float64}`: Boundary flux array to populate (pre-allocated)
+- `boundary_node_influences::Dict{Int, Float64}`: Influence lengths per node
+
+# Note
+- Modifies q_boundary_water in-place
+- Water flow BC is scalar (unlike gas which is vector per gas species)
+- Flow is positive for inflow, negative for outflow [m³/(m·s)]
+"""
+function apply_boundary_flows_water!(mesh, q_boundary_water::Vector{Float64}, boundary_node_influences::Dict{Int, Float64})
+    # Apply nodal uniform flow boundary conditions for water
+    for (node_id, flows) in mesh.uniform_flow_bc
+        # For water solver, first element is water flux (analogous to gas solver pattern)
+        # flows[1] is water flux intensity [m³/(m²·s)]
+        if length(flows) >= 1 && haskey(boundary_node_influences, node_id)
+            # Weight flow by nodal influence length
+            q_boundary_water[node_id] = flows[1] * boundary_node_influences[node_id]
+        end
+    end
+end
+
+#------------------------------------------------------------------------------
+# Initialize water flow vectors
+#------------------------------------------------------------------------------
+"""
+    zero_flow_vectors_water!(Nnodes::Int)
+
+Initialize all water flow vectors to zero based on mesh dimensions.
+This function should be called after mesh data is loaded during initialization.
+Follows the same pattern as gas solver's `zero_flow_vectors!()` for consistency.
+
+# Arguments
+- `Nnodes::Int`: Total number of nodes in the mesh
+
+# Note
+- Modifies global flow vectors: `q_flux_water`, `q_boundary_water`
+- All water flow vectors are initialized to zero
+- Water flows are recomputed fresh each timestep from boundary conditions + state
+- Does NOT initialize `dtheta_dt` (that's done in initialize_variables.jl as it's a time derivative)
+"""
+function zero_flow_vectors_water!(Nnodes::Int)
+    global q_flux_water, q_boundary_water
+    
+    # Initialize water flow vectors (Nnodes)
+    q_flux_water = zeros(Float64, Nnodes)
+    q_boundary_water = zeros(Float64, Nnodes)
+end
+
+#------------------------------------------------------------------------------
 # Initialize all flows
 #------------------------------------------------------------------------------
 """
@@ -166,6 +229,7 @@ end
 
 
 # Export all public functions
-export zero_flow_vectors!, apply_boundary_flows!, initialize_all_flows!
+export zero_flow_vectors!, apply_boundary_flows!, apply_boundary_flows_water!, zero_flow_vectors_water!, initialize_all_flows!
 export q_advection, q_gravitational, q_diffusion, q_boundary, q_source_sink
+export q_flux_water, q_boundary_water
 export boundary_edges
