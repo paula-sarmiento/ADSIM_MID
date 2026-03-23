@@ -131,6 +131,10 @@ proc ADSIM::WriteSolver { root } {
     set calc_mode_container [$solver_container selectNodes {container[@n="calculation_mode"]}]
     
     if {$calc_mode_container != ""} {
+        # Water flow
+        set water_flow [$calc_mode_container selectNodes {string(value[@n="water_flow"]/@v)}]
+        GiD_WriteCalculationFile puts "water_flow = $water_flow"
+        
         # Diffusion
         set diffusion [$calc_mode_container selectNodes {string(value[@n="diffusion"]/@v)}]
         GiD_WriteCalculationFile puts "diffusion = $diffusion"
@@ -245,3 +249,5 @@ proc ADSIM::WriteDataSaving { root } {
     
     GiD_WriteCalculationFile puts ""
 }
+
+
