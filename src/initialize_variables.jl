@@ -400,10 +400,13 @@ function apply_initial_water_pressure_head!(mesh, materials)
                 soil_name = materials.soil_dictionary[material_idx]
                 soil_props = get_soil_properties(materials, soil_name)
                 
-                if soil_props !== nothing && hasproperty(soil_props, :water) && hasproperty(soil_props.water, :theta_h)
-                    for node_id in element_nodes
-                        theta_w[node_id] = soil_props.water.theta_h(h_ic)
-                        h[node_id] = soil_props.water.h_theta(theta_w[node_id])
+                if soil_props !== nothing && hasproperty(soil_props, :water)
+                    wmodel = soil_props.water.swrc_model_instance
+                    if wmodel !== nothing
+                        for node_id in element_nodes
+                            theta_w[node_id] = theta(wmodel, h_ic)
+                            h[node_id] = h_inv(wmodel, theta_w[node_id])
+                        end
                     end
                 end
             end
@@ -480,9 +483,12 @@ function apply_water_volumetric_content_bc!(mesh, materials)
         if material_idx !== nothing
             soil_name = materials.soil_dictionary[material_idx]
             soil_props = get_soil_properties(materials, soil_name)
-            if soil_props !== nothing && hasproperty(soil_props, :water) && hasproperty(soil_props.water, :h_theta)
-                h[node_id] = soil_props.water.h_theta(theta_bc)  # Convert θ to h
-                theta_w[node_id] = soil_props.water.theta_h(h[node_id])  # Derive θ from h
+            if soil_props !== nothing && hasproperty(soil_props, :water)
+                wmodel = soil_props.water.swrc_model_instance
+                if wmodel !== nothing
+                    h[node_id] = h_inv(wmodel, theta_bc)  # Convert θ to h
+                    theta_w[node_id] = theta(wmodel, h[node_id])  # Derive θ from h
+                end
             end
         end
     end
@@ -517,10 +523,13 @@ function apply_water_pressure_head_bc!(mesh, materials)
                 soil_name = materials.soil_dictionary[material_idx]
                 soil_props = get_soil_properties(materials, soil_name)
                 
-                if soil_props !== nothing && hasproperty(soil_props, :water) && hasproperty(soil_props.water, :theta_h)
-                    # Convert prescribed h → θ via SWRC
-                    theta_w[node_id] = soil_props.water.theta_h(h_bc)
-                    h[node_id] = h_bc
+                if soil_props !== nothing && hasproperty(soil_props, :water)
+                    wmodel = soil_props.water.swrc_model_instance
+                    if wmodel !== nothing
+                        # Convert prescribed h → θ via SWRC
+                        theta_w[node_id] = theta(wmodel, h_bc)
+                        h[node_id] = h_bc
+                    end
                 end
             end
         end

@@ -333,21 +333,15 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         
 
         # Initialize water flow parameters 
-        # Initialize SWRC parameters - closures will be created at runtime
+        # Initialize SWRC parameters - model instance will be created at runtime
         if soil_props.water.swrc_model != "None"
             soil_props.water.theta_s = soil_props.porosity          
             soil_props.water.theta_r = soil_props.water.residual_water_content  
             soil_props.water.K_sat = 0.0  # Placeholder - computed at runtime
-            
-            # Set dummy closures (will be replaced in compute_K_sat_runtime!())
-            dummy_func = (x) -> 0.0
-            soil_props.water.K_h = dummy_func
-            soil_props.water.theta_h = dummy_func
-            soil_props.water.h_theta = dummy_func
-            soil_props.water.c_s = dummy_func
-            soil_props.water.D_w = dummy_func
+            soil_props.water.swrc_model_instance = nothing  # Will be assigned in compute_K_sat_runtime!()
         else
             soil_props.water.swrc_model = "None"
+            soil_props.water.swrc_model_instance = nothing
         end
         
         materials.soils[soil_name] = soil_props
@@ -573,8 +567,8 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
             soil.water.K_sat_y = soil.water.K_sat  # Use isotropic value as fallback
         end
         
-        # CRITICAL: Recreate SWRC closures with the newly-computed K_sat
-        # The closures were created with placeholder K_sat; now update them
+        # CRITICAL: Create SWRC model instance with the newly-computed K_sat
+        # Create model struct for method dispatch (struct+dispatch pattern)
         if soil.water.swrc_model != "None"
             try
                 swrc_params = Dict{String, Float64}(
@@ -590,19 +584,54 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                     swrc_params["delta"] = soil.water.swrc_cav_delta
                 end
                 
-                # Recreate SWRC closures with updated K_sat
-                swrc_model = create_swrc_model(soil.water.swrc_model, swrc_params)
-                soil.water.K_h = swrc_model.K_h
-                soil.water.theta_h = swrc_model.theta_h
-                soil.water.h_theta = swrc_model.h_theta
-                soil.water.c_s = swrc_model.c_s
-                soil.water.D_w = swrc_model.D_w
+                # Create SWRC model struct instance with updated K_sat (option: add directional K_s_x, K_s_y)
+                swrc_params["K_sat_x"] = soil.water.K_sat_x
+                swrc_params["K_sat_y"] = soil.water.K_sat_y
+                
+                soil.water.swrc_model_instance = create_swrc_model(soil.water.swrc_model, swrc_params)
             catch error_obj
-                # Log but don't fail - use previous closures
-                @warn "Failed to update SWRC closures for soil '$soil_name' after K_sat computation: $(string(error_obj))"
+                # Log but don't fail - leave as nothing
+                @warn "Failed to create SWRC model instance for soil '$soil_name' after K_sat computation: $(string(error_obj))"
             end
         end
     end
+end
+
+
+"""
+    get_water_model(water_props::WaterSoilProperties) -> SWRCModel
+
+Create a Richards equation water SWRC model from WaterSoilProperties.
+
+Returns appropriate SWRC model instance (Van Genuchten, Cavalcante, etc.)
+for use with the implicit Richards solver.
+
+# Arguments
+- `water_props::WaterSoilProperties`: Water material properties with SWRC model instance
+
+# Returns
+- `Union{SWRCModel, Nothing}`: Model struct instance or nothing if no model is assigned
+
+# Example
+\`\`\`julia
+water_props = soil.water
+model = get_water_model(water_props)
+if model !== nothing
+    K_val = K_h(model, h)      # Method dispatch
+    theta_val = theta(model, h)
+    C_val = C_moist(model, h)
+end
+\`\`\`
+
+# Supported models
+- `VanGenuchten`: Van Genuchten-Mualem model (ADSIM swrc_models.jl)
+- `CavalcanteZornberg`: Cavalcante-Zornberg exponential model (ADSIM swrc_models.jl)
+- `LinearSoil`: Linear retention curve (testing/verification only)
+- `ConstantSoil`: Constant K and C coefficients (testing/verification only)
+- `nothing`: No model assigned
+\"\"\"
+function get_water_model(water_props::WaterSoilProperties)::Union{SWRCModel, Nothing}
+    return water_props.swrc_model_instance
 end
 
 
@@ -610,4 +639,4 @@ end
 export MaterialData, GasProperties, LiquidProperties, SoilProperties
 export read_materials_file, get_gas_properties, get_soil_properties
 export get_num_gases, get_num_soils, get_liquid_properties
-export validate_swrc_parameters, compute_K_sat_runtime!
+export validate_swrc_parameters, compute_K_sat_runtime!, get_water_model
