@@ -656,8 +656,85 @@ function get_water_model(water_props::WaterSoilProperties)::Union{SWRCModel, Not
 end
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Element-level water property helpers (used by Richards solvers)
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+"""
+    ElementWaterProps
+ 
+Water properties for a single element, extracted from ADSIM materials.
+Packages the SWRC model instance and anisotropic K_sat values for efficient
+access during element-level assembly (avoids repeated dictionary lookups).
+ 
+# Fields
+- `model::SWRCModel` — SWRC model instance (for theta, C_moist, K_h, Se dispatch)
+- `K_sat_x::Float64` — Saturated hydraulic conductivity in x [L/T]
+- `K_sat_y::Float64` — Saturated hydraulic conductivity in y [L/T]
+- `K_sat::Float64` — Isotropic K_sat (used to extract k_r = K_h/K_sat)
+"""
+struct ElementWaterProps
+    model   :: SWRCModel
+    K_sat_x :: Float64
+    K_sat_y :: Float64
+    K_sat   :: Float64
+end
+ 
+"""
+    get_element_water_props(mesh, materials, elem_id::Int) → ElementWaterProps
+ 
+Extract water properties for element `elem_id` from ADSIM materials.
+Falls back to first soil if no material assignment exists.
+ 
+# Arguments
+- `mesh`: Mesh data structure
+- `materials`: MaterialData structure
+- `elem_id::Int`: Element ID
+ 
+# Returns
+- `ElementWaterProps`: Packaged water properties for this element
+"""
+function get_element_water_props(mesh, materials, elem_id::Int) :: ElementWaterProps
+    mat_idx = get_element_material(mesh, elem_id)
+    if mat_idx === nothing
+        mat_idx = 1
+    end
+ 
+    soil_name = materials.soil_dictionary[mat_idx]
+    soil = materials.soils[soil_name]
+ 
+    model = soil.water.swrc_model_instance
+    if model === nothing
+        error("Element $elem_id: soil '$soil_name' has no SWRC model instance. " *
+              "Ensure compute_K_sat_runtime! was called and swrc_model ≠ 'None'.")
+    end
+ 
+    return ElementWaterProps(model, soil.water.K_sat_x, soil.water.K_sat_y, soil.water.K_sat)
+end
+ 
+"""
+    precompute_element_water_props(mesh, materials) → Vector{ElementWaterProps}
+ 
+Precompute water properties for ALL elements at once.
+Called once before the time loop to avoid repeated dictionary lookups during assembly.
+ 
+# Arguments
+- `mesh`: Mesh data structure
+- `materials`: MaterialData structure
+ 
+# Returns
+- `Vector{ElementWaterProps}`: One entry per element
+"""
+function precompute_element_water_props(mesh, materials) :: Vector{ElementWaterProps}
+    return [get_element_water_props(mesh, materials, e) for e in 1:mesh.num_elements]
+end
+ 
+ 
 # Export all public functions and types
 export MaterialData, GasProperties, LiquidProperties, SoilProperties
 export read_materials_file, get_gas_properties, get_soil_properties
 export get_num_gases, get_num_soils, get_liquid_properties
 export validate_swrc_parameters, compute_K_sat_runtime!, get_water_model
+export ElementWaterProps, get_element_water_props, precompute_element_water_props
+ 
