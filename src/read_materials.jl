@@ -323,6 +323,8 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.specific_heat_solids = Float64(soil_info["specific_heat_solids"])
         
         # Read SWRC properties (optional, backward compatible)
+        # Normalize model name: replace spaces with underscores for consistent matching
+        # GiD may write "Van Genuchten" (with space) but Julia code expects "Van_Genuchten"
         raw_swrc_model = String(get(soil_info, "swrc_model", "None"))
         soil_props.water.swrc_model = replace(raw_swrc_model, " " => "_")
         soil_props.water.swrc_max_anw = Float64(get(soil_info, "swrc_max_anw", 0.0))
@@ -596,22 +598,24 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                 # Log but don't fail - leave as nothing
                 @warn "Failed to create SWRC model instance for soil '$soil_name' after K_sat computation: $(string(error_obj))"
             end
-             # Post-creation validation: fail hard if model was requested but not created
-            if soil.water.swrc_model_instance === nothing 
-                error("""SWRC Model Initialization Error: Soil '$soil_name' has swrc_model='$(soil.water.swrc_model)'
-                        but the model instance could not be created.
-
-                        Check that:
-                        - The SWRC model name is valid: "Van_Genuchten" or "Cavalcante"
-                        - Required parameters are non-zero (α, n for VG; δ for Cavalcante)
-                        - Intrinsic permeability is positive (needed for K_sat computation)
-                        - Liquid density and viscosity are positive
-
-                        Current values:
-                        K_sat = $(soil.water.K_sat)
-                        theta_s = $(soil.water.theta_s), theta_r = $(soil.water.theta_r)
-                        vg_alpha = $(soil.water.swrc_vg_alpha), vg_n = $(soil.water.swrc_vg_n)
-                        cav_delta = $(soil.water.swrc_cav_delta)
+            
+            # Post-creation validation: fail hard if model was requested but not created
+            if soil.water.swrc_model_instance === nothing
+                error("""
+                SWRC Model Initialization Error: Soil '$soil_name' has swrc_model='$(soil.water.swrc_model)' 
+                but the model instance could not be created.
+                
+                Check that:
+                - The SWRC model name is valid: "Van_Genuchten" or "Cavalcante"
+                - Required parameters are non-zero (α, n for VG; δ for Cavalcante)
+                - Intrinsic permeability is positive (needed for K_sat computation)
+                - Liquid density and viscosity are positive
+                
+                Current values:
+                  K_sat = $(soil.water.K_sat)
+                  theta_s = $(soil.water.theta_s), theta_r = $(soil.water.theta_r)
+                  vg_alpha = $(soil.water.swrc_vg_alpha), vg_n = $(soil.water.swrc_vg_n)
+                  cav_delta = $(soil.water.swrc_cav_delta)
                 """)
             end
         end
@@ -656,42 +660,42 @@ function get_water_model(water_props::WaterSoilProperties)::Union{SWRCModel, Not
 end
 
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Element-level water property helpers (used by Richards solvers)
 # ══════════════════════════════════════════════════════════════════════════════
- 
+
 """
     ElementWaterProps
- 
+
 Water properties for a single element, extracted from ADSIM materials.
-Packages the SWRC model instance and anisotropic K_sat values for efficient
-access during element-level assembly (avoids repeated dictionary lookups).
- 
+Packages the SWRC model instance for efficient access during element-level
+assembly (avoids repeated dictionary lookups).
+
+The SWRC model already contains K_s_x and K_s_y internally, and provides
+dispatch functions K_h_x(model, h) and K_h_y(model, h) for anisotropic
+conductivity. No need to store K_sat values separately.
+
 # Fields
-- `model::SWRCModel` — SWRC model instance (for theta, C_moist, K_h, Se dispatch)
-- `K_sat_x::Float64` — Saturated hydraulic conductivity in x [L/T]
-- `K_sat_y::Float64` — Saturated hydraulic conductivity in y [L/T]
-- `K_sat::Float64` — Isotropic K_sat (used to extract k_r = K_h/K_sat)
+- `model::SWRCModel` — SWRC model instance providing:
+    theta(model, h), C_moist(model, h), Se(model, h),
+    K_h(model, h), K_h_x(model, h), K_h_y(model, h),
+    h_inv(model, theta), D_w(model, h)
 """
 struct ElementWaterProps
-    model   :: SWRCModel
-    K_sat_x :: Float64
-    K_sat_y :: Float64
-    K_sat   :: Float64
+    model :: SWRCModel
 end
- 
+
 """
     get_element_water_props(mesh, materials, elem_id::Int) → ElementWaterProps
- 
+
 Extract water properties for element `elem_id` from ADSIM materials.
 Falls back to first soil if no material assignment exists.
- 
+
 # Arguments
 - `mesh`: Mesh data structure
 - `materials`: MaterialData structure
 - `elem_id::Int`: Element ID
- 
+
 # Returns
 - `ElementWaterProps`: Packaged water properties for this element
 """
@@ -700,41 +704,40 @@ function get_element_water_props(mesh, materials, elem_id::Int) :: ElementWaterP
     if mat_idx === nothing
         mat_idx = 1
     end
- 
+
     soil_name = materials.soil_dictionary[mat_idx]
     soil = materials.soils[soil_name]
- 
+
     model = soil.water.swrc_model_instance
     if model === nothing
         error("Element $elem_id: soil '$soil_name' has no SWRC model instance. " *
               "Ensure compute_K_sat_runtime! was called and swrc_model ≠ 'None'.")
     end
- 
-    return ElementWaterProps(model, soil.water.K_sat_x, soil.water.K_sat_y, soil.water.K_sat)
+
+    return ElementWaterProps(model)
 end
- 
+
 """
     precompute_element_water_props(mesh, materials) → Vector{ElementWaterProps}
- 
+
 Precompute water properties for ALL elements at once.
 Called once before the time loop to avoid repeated dictionary lookups during assembly.
- 
+
 # Arguments
 - `mesh`: Mesh data structure
 - `materials`: MaterialData structure
- 
+
 # Returns
 - `Vector{ElementWaterProps}`: One entry per element
 """
 function precompute_element_water_props(mesh, materials) :: Vector{ElementWaterProps}
     return [get_element_water_props(mesh, materials, e) for e in 1:mesh.num_elements]
 end
- 
- 
+
+
 # Export all public functions and types
 export MaterialData, GasProperties, LiquidProperties, SoilProperties
 export read_materials_file, get_gas_properties, get_soil_properties
 export get_num_gases, get_num_soils, get_liquid_properties
 export validate_swrc_parameters, compute_K_sat_runtime!, get_water_model
 export ElementWaterProps, get_element_water_props, precompute_element_water_props
- 
