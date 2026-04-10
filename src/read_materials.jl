@@ -77,6 +77,7 @@ Includes soil-water retention characteristics (SWRC), hydraulic conductivity, an
 - `h_theta::Function`: Closure h(θ) - matric head as function of volumetric water content [m]
 - `c_s::Function`: Closure c_s(h) - water capacity as function of matric head [1/m]
 - `D_w::Function`: Closure D_w(h) - water diffusivity as function of matric head [m²/s]
+- `swrc_model_instance::Union{SWRCModel, Nothing}`: SWRC model instance for dispatch-based evaluation
 """
 mutable struct WaterSoilProperties
     residual_water_content::Float64
@@ -96,13 +97,14 @@ mutable struct WaterSoilProperties
     h_theta::Function
     c_s::Function
     D_w::Function
+    swrc_model_instance::Union{SWRCModel, Nothing}
     
     function WaterSoilProperties()
         # Dummy closures (will be replaced if hydraulic properties are provided)
         dummy_func = (x) -> 0.0
         new(0.0, "None", 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0,
-            dummy_func, dummy_func, dummy_func, dummy_func, dummy_func)
+            dummy_func, dummy_func, dummy_func, dummy_func, dummy_func, nothing)
     end
 end
 
@@ -321,7 +323,8 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.specific_heat_solids = Float64(soil_info["specific_heat_solids"])
         
         # Read SWRC properties (optional, backward compatible)
-        soil_props.water.swrc_model = String(get(soil_info, "swrc_model", "None"))
+        raw_swrc_model = String(get(soil_info, "swrc_model", "None"))
+        soil_props.water.swrc_model = replace(raw_swrc_model, " " => "_")
         soil_props.water.swrc_max_anw = Float64(get(soil_info, "swrc_max_anw", 0.0))
         soil_props.water.swrc_saturation_max_anw = Float64(get(soil_info, "swrc_saturation_max_anw", 0.0))
         soil_props.water.swrc_vg_alpha = Float64(get(soil_info, "swrc_vg_alpha", 0.0))
@@ -593,6 +596,24 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                 # Log but don't fail - leave as nothing
                 @warn "Failed to create SWRC model instance for soil '$soil_name' after K_sat computation: $(string(error_obj))"
             end
+             # Post-creation validation: fail hard if model was requested but not created
+            if soil.water.swrc_model_instance === nothing 
+                error("""SWRC Model Initialization Error: Soil '$soil_name' has swrc_model='$(soil.water.swrc_model)'
+                        but the model instance could not be created.
+
+                        Check that:
+                        - The SWRC model name is valid: "Van_Genuchten" or "Cavalcante"
+                        - Required parameters are non-zero (α, n for VG; δ for Cavalcante)
+                        - Intrinsic permeability is positive (needed for K_sat computation)
+                        - Liquid density and viscosity are positive
+
+                        Current values:
+                        K_sat = $(soil.water.K_sat)
+                        theta_s = $(soil.water.theta_s), theta_r = $(soil.water.theta_r)
+                        vg_alpha = $(soil.water.swrc_vg_alpha), vg_n = $(soil.water.swrc_vg_n)
+                        cav_delta = $(soil.water.swrc_cav_delta)
+                """)
+            end
         end
     end
 end
@@ -629,7 +650,7 @@ end
 - `LinearSoil`: Linear retention curve (testing/verification only)
 - `ConstantSoil`: Constant K and C coefficients (testing/verification only)
 - `nothing`: No model assigned
-\"\"\"
+"""
 function get_water_model(water_props::WaterSoilProperties)::Union{SWRCModel, Nothing}
     return water_props.swrc_model_instance
 end

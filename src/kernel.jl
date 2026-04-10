@@ -22,14 +22,12 @@ using .ADSIMVersion: get_version
 include("read_mesh.jl")
 include("read_materials.jl")
 include("read_calc_params.jl")
-include("swrc_models.jl")
 include("initialize_variables.jl")
 include("initialize_flows.jl")
 include("time_step.jl")
 include("shape_functions.jl")
 include("write_vtk.jl")
 include("fully_explicit_solver.jl")
-include("fully_explicit_solver_water.jl")
 include("write_checkpoint.jl")
 include("read_checkpoint.jl")
 
@@ -157,6 +155,14 @@ function main()
         log_print("   ✓ Loaded $(length(materials.gas_dictionary)) gases")
         log_print("   ✓ Loaded $(length(materials.soil_dictionary)) soils")
 
+        # Step 2.1: Normalize water BC/IC using SWRC models
+        swrc_in_materials = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
+        if swrc_in_materials
+            log_print("\nNormalizing water boundary and initial conditions")
+            normalize_water_conditions!(mesh, materials)
+            log_print("   ✓ Water BC/IC normalized to standard representations")
+        end
+
         # Step 3: Read calculation parameters
         log_print("\n[3/8] Reading calculation parameters file: $(calc_file)")
         calc_params = get_all_calc_params(calc_file)
@@ -166,22 +172,22 @@ function main()
         # Step 3.1: Compute K_sat for soils with water flow (depends on gravity)
         compute_K_sat_runtime!(materials, calc_params)
 
-        # Step 3.5: Validate reaction kinetics requirements
+        # Step 3.2: Validate reaction kinetics requirements
         if calc_params["solver_settings"]["reaction_kinetics"] == 1
             log_print("\nValidating reaction kinetics requirements")
             validate_reaction_kinetics_requirements(calc_params["solver_settings"], materials)
             log_print("   ✓ CO2 gas is defined in materials")
         end
 
-        # Step 3.6: Validate SWRC parameters if any soil uses SWRC
-        swrc_used = any(soil.swrc_model != "None" for (name, soil) in materials.soils)
+        # Step 3.3: Validate SWRC parameters if any soil uses SWRC
+        swrc_used = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
         if swrc_used
             log_print("\nValidating SWRC parameters")
             validate_swrc_parameters(materials)
             log_print("   ✓ SWRC model parameters validated")
         end
 
-        # Step 3.7: Check for existing checkpoint from previous stage
+        # Step 3.4: Check for existing checkpoint from previous stage
         checkpoint_file, prev_stage = find_latest_checkpoint(project_name, output_dir)
         checkpoint_loaded = false
         initial_state = nothing
@@ -280,22 +286,23 @@ function main()
         log_print(@sprintf("   ✓ Actual time step: %.4g %s", time_data.actual_dt, calc_params["units"]["time_unit"]))
         log_print("   ✓ Number of time steps: $(time_data.num_steps)")
 
-        # Step 8: Run fully explicit solver
-        # ═══════════════════════════════════════════════════════════════════════════════════
-        # Determine which solver to use based on solver type in calc_params
-        # ═══════════════════════════════════════════════════════════════════════════════════
-        solver_type = get(calc_params["solver_settings"], "solver_type", "gas")
-        
-        if solver_type == "water"
+        # Step 8: Run solver
+        # ═══════════════════════════════════════════════════════════════
+        # Select solver based on water_flow flag in [solver] section
+        # water_flow == 1 → Richards equation (implicit)
+        # water_flow == 0 → gas diffusion (explicit, default)
+        # ═══════════════════════════════════════════════════════════════
+        water_flow_enabled = get(calc_params["solver_settings"], "water_flow", 0) == 1
+ 
+        if water_flow_enabled
             log_print("\n[8/8] Running water flow solver (Richards equation)")
-            final_state = fully_explicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
-        elseif solver_type == "gas"
+            # TODO: replace with implicit_richards_solver when ready
+            error("Implicit Richards solver not yet integrated. Set water_flow = 0 to use gas diffusion solver.")
+        else
             log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
             final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
-        else
-            error("Unknown solver type: '$solver_type'. Must be 'gas' or 'water'.")
         end
-
+ 
         # Write checkpoint file for multi-stage calculations
         log_print("\nWriting checkpoint file for stage $(current_stage)...")
         checkpoint_file = write_checkpoint(project_name, current_stage, 
@@ -304,16 +311,16 @@ function main()
                                           final_state.next_output_time)
         checkpoint_size = get_checkpoint_file_size(checkpoint_file)
         log_print("   ✓ Checkpoint saved: $(basename(checkpoint_file)) ($(checkpoint_size))")
-
+ 
         # Print total run time
         end_time = now()
         total_time = (end_time - start_time).value / 1000.0  # Convert milliseconds to seconds
         log_print("\nTotal run time: $(total_time) seconds")
-
+ 
         log_print("\n" * "="^64)
         log_print("Calculation completed successfully")
         log_print("="^64)
-
+ 
     catch e
         # Log the error with full details
         log_print("\n" * "="^64)

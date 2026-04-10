@@ -76,6 +76,7 @@ function get_solver_settings(calc_data::Dict)
     solver = calc_data["solver"]
     return Dict(
         "dimension" => solver["solver_type"],
+        "water_flow" => get(solver, "water_flow", 0), 
         "diffusion" => solver["diffusion"],
         "advection" => solver["advection"],
         "gravity" => solver["gravity"],
@@ -172,6 +173,7 @@ function log_analysis_type(solver_settings::Dict)
     
     # Build component list (values are 0 or 1)
     components = String[]
+    get(solver_settings, "water_flow", 0) == 1 && push!(components, "Water Flow (Richards)")
     solver_settings["diffusion"] == 1 && push!(components, "Diffusion")
     solver_settings["advection"] == 1 && push!(components, "Advection")
     solver_settings["gravity"] == 1 && push!(components, "Gravity")

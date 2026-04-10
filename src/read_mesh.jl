@@ -90,25 +90,32 @@ end
 
 
 """
-read_mesh_file(filename::String) -> MeshData
+read_mesh_file(filename::String, materials = nothing) -> MeshData
 
 Read an ADSIM .mesh file and return a MeshData structure containing all
 geometrical and physical data.
 
+Optionally normalizes water boundary conditions and initial conditions using SWRC models:
+- If materials provided: converts volumetric_content_bc (θ) → pressure_head_bc (h)
+  and initial_pressure_head (h) → initial_volumetric_content (θ)
+- If materials = nothing: reads mesh as-is without conversion (backward compatible)
+
 # Arguments
 - `filename::String`: Path to the .mesh file
+- `materials::MaterialData = nothing`: Material properties with SWRC models (optional)
 
 # Returns
-- `MeshData`: Structure containing all mesh information
+- `MeshData`: Structure containing all mesh information with normalized water BC/IC
 
 # Example
 ```julia
-mesh = read_mesh_file("problem.mesh")
+mesh = read_mesh_file("problem.mesh", materials)
 println("Number of nodes: ", mesh.num_nodes)
-println("Number of elements: ", mesh.num_elements)
+println("Pressure head BCs: ", length(mesh.pressure_head_bc))
+println("Volumetric content ICs: ", length(mesh.initial_volumetric_content))
 ```
 """
-function read_mesh_file(filename::String)
+function read_mesh_file(filename::String, materials = nothing)
     mesh = MeshData()
     
     open(filename, "r") do file
@@ -194,7 +201,65 @@ function read_mesh_file(filename::String)
         end
     end
     
+    # Normalize water conditions if materials provided
+    if materials !== nothing
+        normalize_water_conditions!(mesh, materials)
+    end
+    
     return mesh
+end
+
+
+#------------------------------------------------------------------------------
+# WATER CONDITION NORMALIZATION
+#------------------------------------------------------------------------------
+
+"""
+normalize_water_conditions!(mesh::MeshData, materials)
+
+Convert water boundary conditions and initial conditions to standard representations:
+- Boundary conditions → always pressure_head (h) [m]
+- Initial conditions → always volumetric_content (θ) [-]
+
+If mesh has volumetric_content_bc (θ), converts to h using SWRC inverse h_inv().
+If mesh has initial_pressure_head (h), converts to θ using SWRC closure theta().
+Deprecated fields are cleared after conversion.
+
+# Arguments
+- `mesh::MeshData`: Mesh with parsed BC/IC (modified in place)
+- `materials::MaterialData`: Material data with SWRC models
+"""
+function normalize_water_conditions!(mesh::MeshData, materials)
+    # Convert BC: volumetric_content_bc (θ) → pressure_head_bc (h)
+    for (node_id, theta) in mesh.volumetric_content_bc
+        # Get any element containing this node
+        elems = get_node_elements(mesh, node_id)
+        if !isempty(elems)
+            elem_id = elems[1]
+            mat_idx = mesh.materials[elem_id]
+            if mat_idx !== nothing && mat_idx <= length(materials.soil_dictionary)
+                soil = materials.soils[materials.soil_dictionary[mat_idx]]
+                if soil.water.swrc_model_instance !== nothing
+                    h = h_inv(soil.water.swrc_model_instance, theta)
+                    mesh.pressure_head_bc[node_id] = h
+                end
+            end
+        end
+    end
+    empty!(mesh.volumetric_content_bc)  # Clear deprecated field
+    
+    # Convert IC: initial_pressure_head (h) → initial_volumetric_content (θ)
+    for (elem_id, h) in mesh.initial_pressure_head
+        mat_idx = mesh.materials[elem_id]
+        if mat_idx !== nothing && mat_idx <= length(materials.soil_dictionary)
+            soil = materials.soils[materials.soil_dictionary[mat_idx]]
+            if soil.water.swrc_model_instance !== nothing
+                theta = theta(soil.water.swrc_model_instance, h)
+                mesh.initial_volumetric_content[elem_id] = theta
+            end
+        end
+    end
+    empty!(mesh.initial_pressure_head)  # Clear deprecated field
 end
 
 
@@ -1182,4 +1247,4 @@ end
 export MeshData, read_mesh_file, get_element_nodes, get_node_coordinates
 export get_element_material, get_node_elements, has_pressure_bc
 export calculate_edge_outward_normal, BoundaryNodeInfluence, get_boundary_node_influences
-export identify_boundary_edges
+export identify_boundary_edges, normalize_water_conditions!
