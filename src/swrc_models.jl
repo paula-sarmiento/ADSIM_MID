@@ -455,8 +455,26 @@ function K_h(model::LinearSoil, h::Float64)::Float64
     return model.K_s * Se_val
 end
 
+"""    K_h_x(model::LinearSoil, h::Float64) -> Float64
+
+Compute directional hydraulic conductivity (x-component) for LinearSoil model.
+Isotropic model: same as K_h.
 """
-    h_inv(model::LinearSoil, theta::Float64) -> Float64
+function K_h_x(model::LinearSoil, h::Float64)::Float64
+    return K_h(model, h)
+end
+
+"""
+    K_h_y(model::LinearSoil, h::Float64) -> Float64
+
+Compute directional hydraulic conductivity (y-component) for LinearSoil model.
+Isotropic model: same as K_h.
+"""
+function K_h_y(model::LinearSoil, h::Float64)::Float64
+    return K_h(model, h)
+end
+
+"""    h_inv(model::LinearSoil, theta::Float64) -> Float64
 
 Compute pressure head from volumetric water content for LinearSoil model.
 """
@@ -557,8 +575,26 @@ function K_h(model::ConstantSoil, h::Float64)::Float64
     return model.K_val
 end
 
+"""    K_h_x(model::ConstantSoil, h::Float64) -> Float64
+
+Compute directional hydraulic conductivity (x-component) for ConstantSoil model.
+Isotropic model: same as K_h (constant).
 """
-    h_inv(model::ConstantSoil, theta::Float64) -> Float64
+function K_h_x(model::ConstantSoil, h::Float64)::Float64
+    return model.K_val
+end
+
+"""
+    K_h_y(model::ConstantSoil, h::Float64) -> Float64
+
+Compute directional hydraulic conductivity (y-component) for ConstantSoil model.
+Isotropic model: same as K_h (constant).
+"""
+function K_h_y(model::ConstantSoil, h::Float64)::Float64
+    return model.K_val
+end
+
+"""    h_inv(model::ConstantSoil, theta::Float64) -> Float64
 
 Compute pressure head from volumetric water content for ConstantSoil model.
 """

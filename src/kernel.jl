@@ -30,6 +30,7 @@ include("write_vtk.jl")
 include("fully_explicit_solver.jl")
 include("write_checkpoint.jl")
 include("read_checkpoint.jl")
+include("implicit_richards_solver.jl")
 
 using .ShapeFunctions
 using .WriteVTK
@@ -296,8 +297,7 @@ function main()
  
         if water_flow_enabled
             log_print("\n[8/8] Running water flow solver (Richards equation)")
-            # TODO: replace with implicit_richards_solver when ready
-            error("Implicit Richards solver not yet integrated. Set water_flow = 0 to use gas diffusion solver.")
+            final_state = implicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
         else
             log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
             final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)

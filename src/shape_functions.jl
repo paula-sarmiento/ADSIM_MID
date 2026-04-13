@@ -9,7 +9,7 @@ module ShapeFunctions
 
 using Base.Threads
 
-export ShapeFunctionData, initialize_shape_functions!, get_N, get_B, get_invJ, get_detJ
+export ShapeFunctionData, initialize_shape_functions!, get_N, get_B, get_invJ, get_detJ, get_gauss_weights
 
 """
     ShapeFunctionData
@@ -308,6 +308,19 @@ function get_detJ(e::Int, p::Int)
         error("Shape functions not initialized. Call initialize_shape_functions! first.")
     end
     return shape_funcs.detJ[e, p]
+end
+
+"""
+    get_gauss_weights()
+
+Return the vector of Gauss quadrature weights (2×2 integration).
+Format: Vector of 4 weights corresponding to the 4 Gauss points.
+"""
+function get_gauss_weights()
+    if shape_funcs === nothing
+        error("Shape functions not initialized. Call initialize_shape_functions! first.")
+    end
+    return shape_funcs.gauss_weights
 end
 
 end # module ShapeFunctions
