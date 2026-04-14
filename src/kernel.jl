@@ -231,14 +231,15 @@ function main()
             log_print("   ✓ Tracking $(NGases) gas species in $(NSoils) soil types")
         end
 
-        # Step 5: Apply initial conditions and initialize flows
+        # Step 5: Apply initial conditions and initialize flows [LZC: Here is where you should initialize the flow arrays]
         if !checkpoint_loaded
             log_print("\n[5/8] Applying initial conditions and initializing flows")
             apply_all_initial_conditions!(mesh, materials)
-            initialize_all_flows!(mesh, materials, Nnodes, NGases)
+            initialize_all_flows!(mesh, materials, Nnodes, NGases)  #[LZC] Here is where you initialize the p_boundary vectors. 
             log_print("   ✓ Initial and boundary conditions applied")
         else
-            log_print("\n[5/8] Applying boundary conditions from mesh file")
+            log_print("\n[5/8] Applying boundary conditions from mesh file")#[LZC] Here is when you stop a calculation and restart (useful for multi-stage models. Leave this for last, but it is important for completeness
+
             # Apply boundary conditions from mesh file (may have changed between stages)
             # This sets P_boundary, applies concentration and pressure BCs
             apply_concentration_bc!(mesh)
@@ -293,12 +294,12 @@ function main()
         # water_flow == 1 → Richards equation (implicit)
         # water_flow == 0 → gas diffusion (explicit, default)
         # ═══════════════════════════════════════════════════════════════
-        water_flow_enabled = get(calc_params["solver_settings"], "water_flow", 0) == 1
+        water_flow_enabled = get(calc_params["solver_settings"], "water_flow", 0) == 1 #[LZC] I don't get why to use a variable for this when you can just use the calc_param directly.
  
-        if water_flow_enabled
+        if water_flow_enabled #Richard's solver #[LZC] Please do a better job commenting the code. 
             log_print("\n[8/8] Running water flow solver (Richards equation)")
             final_state = implicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
-        else
+        else #Multi gas advection diffusion explicit solver
             log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
             final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
         end
@@ -361,14 +362,6 @@ function main()
             close(log_file)
         end
     end
-end
-
-function print_banner()
-    println("\n" * "="^70)
-    println(" "^20 * "ADSIM - Adsorption Simulator")
-    println(" "^25 * "Version: $(get_version())")
-    println(" "^15 * "Advanced Modeling of Adsorption Processes")
-    println("="^70 * "\n")
 end
 
 # Execute main function when script is run directly

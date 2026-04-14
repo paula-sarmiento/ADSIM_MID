@@ -239,7 +239,7 @@ end
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Dirichlet & Neumann BCs (solver-specific — operates on δ system)
+# Dirichlet & Neumann BCs (solver-specific — operates on δ system) [LZC: Use a p_boundary approach similar to explicit solver]
 # ══════════════════════════════════════════════════════════════════════════════
 
 """
@@ -266,8 +266,9 @@ function apply_dirichlet_richards!(
     return nothing
 end
 
+#[LZC: Assemble flow BC a priori. See how flow is assemble for carbonation equation and then use directly.]
 """
-    apply_neumann_edge_richards!(R, node_i, node_j, q_bar, coords)
+    apply_neumann_edge_richards!(R, node_i, node_j, q_bar, coords) 
 
 Add Neumann flux to residual for edge (node_i, node_j).
 q_bar > 0 = flux INTO domain. 2-point Gauss on edge.
@@ -327,9 +328,9 @@ function picard_richards!(
 
     for m in 1:max_iter
         assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache)
-        apply_dirichlet_richards!(A, R, dbc_nodes)
+        apply_dirichlet_richards!(A, R, dbc_nodes) # [LZC] As described previously, this will not be needed if we assemble the flow BCs a priori. See how flow is assembled for carbonation equation and then use directly.
 
-        δ = A \ R
+        δ = A \ R # [LZC] Please make a better job commenting the code calculation lines. This will be used by others.
         δ_norm = maximum(abs.(δ))
 
         if δ_norm < tol
@@ -405,12 +406,12 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     log_print(@sprintf("   Gravity = [%.2f, %.2f], |g| = %.2f", gx, gy, g_mag))
 
     # ── Build precomputed data (from ShapeFunctions + materials) ──────
-    log_print("   Building Richards cache...")
+    log_print("   Building Richards cache...") #[LZC] I think this should be done when shape functions are initialized and after the mesh is read once, then shared across solvers. This way we avoid building the same cache multiple times if we run multiple solvers sequentially.
     cache = build_richards_cache(mesh)
     log_print("   ✓ Cache built for $(mesh.num_elements) elements")
 
     log_print("   Precomputing element water properties...")
-    elem_props = precompute_element_water_props(mesh, materials)
+    elem_props = precompute_element_water_props(mesh, materials) #[LZC]: This should go when we initialize and validate materials. That will make it consistent with ADSIM's workflow
     log_print("   ✓ Element SWRC models cached")
 
     # ── Build sparsity pattern ────────────────────────────────────────
@@ -420,7 +421,7 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
 
     # ── Build Dirichlet BCs (from initialize_variables.jl) ────────────
     dbc_nodes, dbc_vals = build_dirichlet_lists(mesh, materials)
-    log_print("   ✓ Dirichlet BCs: $(length(dbc_nodes)) nodes")
+    log_print("   ✓ Dirichlet BCs: $(length(dbc_nodes)) nodes") #[LZC]: Same as before. See where boundary conditions are initialized and work consistently with that. 
     log_print(@sprintf("   ✓ Initial h: min=%.4f, max=%.4f", minimum(h), maximum(h)))
 
     # ── Time tracking ─────────────────────────────────────────────────
@@ -446,13 +447,13 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     for step in 1:n_steps
         n_iter = picard_richards!(h_new, h, mesh, elem_props, dt, e_g,
                                    dbc_nodes, dbc_vals, A, cache;
-                                   tol=1e-8, max_iter=100, ω=1.0)
+                                   tol=1e-8, max_iter=100, ω=1.0) #[LZC] this is the actual solver call. Please do a better job commenting the code.
 
         h .= h_new
         current_time += dt
 
         # Re-enforce BCs on global water variables
-        enforce_water_dirichlet_bc!(mesh, materials)
+        enforce_water_dirichlet_bc!(mesh, materials) #[LZC]: Explain this to me next time.
 
         if save_data || step == n_steps
             progress = 100.0 * step / n_steps
