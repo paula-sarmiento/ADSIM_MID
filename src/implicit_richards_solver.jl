@@ -234,37 +234,47 @@ function assemble_richards!(
         end
     end
 
-    return nothing
-end
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Dirichlet & Neumann BCs (solver-specific — operates on δ system) [LZC: Use a p_boundary approach similar to explicit solver]
-# ══════════════════════════════════════════════════════════════════════════════
-
-"""
-    apply_dirichlet_richards!(A, R, dbc_nodes)
-
-Zero rows in A and set diagonal to 1 for Dirichlet nodes, set R=0.
-Since we solve for δ, this gives δ_i = 0 → h stays at prescribed value.
-"""
-function apply_dirichlet_richards!(
-    A         :: SparseMatrixCSC{Float64, Int},
-    R         :: Vector{Float64},
-    dbc_nodes :: Vector{Int}
-)
-    dbc_set = Set(dbc_nodes)
-    rows, cols, _ = findnz(A)
-    for k in eachindex(rows)
-        if rows[k] in dbc_set
-            A.nzval[k] = rows[k] == cols[k] ? 1.0 : 0.0
+    # ─────────────────────────────────────────────────────────────────
+    # Apply P_boundary_water masking: zero matrix rows and residual at BC nodes
+    # This prevents flux contributions from affecting solution at prescribed nodes
+    # (since δ_i = 0 when both A row and R[i] are zeroed, and h_i stays at prescribed value)
+    # ─────────────────────────────────────────────────────────────────
+    global P_boundary_water
+    for i in 1:mesh.num_nodes
+        if P_boundary_water[i, 1] == 0  # BC node
+            # Zero the matrix row i (replace with identity: A[i,i] = 1, A[i,j≠i] = 0)
+            # This must be done before zeroing the residual to maintain linear system structure
+            rows, cols, vals = findnz(A)
+            for k in eachindex(rows)
+                if rows[k] == i
+                    A.nzval[k] = rows[k] == cols[k] ? 1.0 : 0.0
+                end
+            end
+            # Zero the residual at BC nodes
+            R[i] = 0.0
         end
     end
-    for i in dbc_nodes
-        R[i] = 0.0
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 2: Apply Neumann boundary flux contributions
+    # Add prescribed flux to residual at non-Dirichlet nodes
+    # ─────────────────────────────────────────────────────────────────
+    global q_boundary_water
+    for i in 1:mesh.num_nodes
+        # Only add flux at nodes WITHOUT Dirichlet BCs
+        if P_boundary_water[i, 1] != 0  # Free node (not Dirichlet)
+            if q_boundary_water[i] != 0.0  # Has prescribed flux
+                R[i] += q_boundary_water[i]
+                # Sign convention:
+                #   q > 0 = inflow (increases h)
+                #   q < 0 = outflow (decreases h)
+            end
+        end
     end
+
     return nothing
 end
+
 
 #[LZC: Assemble flow BC a priori. See how flow is assemble for carbonation equation and then use directly.]
 """
@@ -299,9 +309,10 @@ end
 
 """
     picard_richards!(h_curr, h_prev, mesh, elem_props, Δt, e_g,
-                      dbc_nodes, dbc_vals, A, cache; tol, max_iter, ω)
+                      A, cache; tol, max_iter, ω)
 
 Picard iteration for one time step. Returns number of iterations.
+Dirichlet BCs are enforced via P_boundary_water masking in assemble_richards!().
 """
 function picard_richards!(
     h_curr     :: Vector{Float64},
@@ -310,8 +321,6 @@ function picard_richards!(
     elem_props :: Vector{ElementWaterProps},
     Δt         :: Float64,
     e_g        :: Vector{Float64},
-    dbc_nodes  :: Vector{Int},
-    dbc_vals   :: Vector{Float64},
     A          :: SparseMatrixCSC{Float64, Int},
     cache      :: RichardsCache;
     tol        :: Float64 = 1e-8,
@@ -322,15 +331,12 @@ function picard_richards!(
     R = zeros(Float64, N)
 
     h_curr .= h_prev
-    for (i, val) in zip(dbc_nodes, dbc_vals)
-        h_curr[i] = val
-    end
 
     for m in 1:max_iter
         assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache)
-        apply_dirichlet_richards!(A, R, dbc_nodes) # [LZC] As described previously, this will not be needed if we assemble the flow BCs a priori. See how flow is assembled for carbonation equation and then use directly.
+        # Masking is now handled in assemble_richards!() via P_boundary_water
 
-        δ = A \ R # [LZC] Please make a better job commenting the code calculation lines. This will be used by others.
+        δ = A \ R
         δ_norm = maximum(abs.(δ))
 
         if δ_norm < tol
@@ -338,9 +344,6 @@ function picard_richards!(
         end
 
         h_curr .+= ω .* δ
-        for (i, val) in zip(dbc_nodes, dbc_vals)
-            h_curr[i] = val
-        end
     end
 
     @warn "Picard did not converge in $max_iter iterations"
@@ -374,16 +377,24 @@ end
 
 """
     implicit_richards_solver(mesh, materials, calc_params, time_data,
-                              project_name, log_print, initial_state)
+                              project_name, log_print, cache, elem_props, initial_state)
 
 Implicit FEM solver for the Richards equation using Backward Euler + Picard iteration.
 Interface matches ADSIM's fully_explicit_diffusion_solver for drop-in replacement.
 
+# Arguments
+- `cache::RichardsCache`: Precomputed shape function and Jacobian data from kernel
+- `elem_props::Vector{ElementWaterProps}`: Precomputed element SWRC models from kernel
+
 # Returns
 - NamedTuple: (current_time, output_counter, next_output_time)
+
+# Note
+These precomputed data structures are built in kernel.jl to avoid redundant
+computation if the solver is called multiple times or chained with other solvers.
 """
 function implicit_richards_solver(mesh, materials, calc_params, time_data,
-                                   project_name, log_print, initial_state=nothing)
+                                   project_name, log_print, cache, elem_props, initial_state=nothing)
     
     global h, theta_w, S_r, P_water, v_water
 
@@ -405,23 +416,24 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
                         dt, calc_params["units"]["time_unit"], n_steps))
     log_print(@sprintf("   Gravity = [%.2f, %.2f], |g| = %.2f", gx, gy, g_mag))
 
-    # ── Build precomputed data (from ShapeFunctions + materials) ──────
-    log_print("   Building Richards cache...") #[LZC] I think this should be done when shape functions are initialized and after the mesh is read once, then shared across solvers. This way we avoid building the same cache multiple times if we run multiple solvers sequentially.
-    cache = build_richards_cache(mesh)
-    log_print("   ✓ Cache built for $(mesh.num_elements) elements")
-
-    log_print("   Precomputing element water properties...")
-    elem_props = precompute_element_water_props(mesh, materials) #[LZC]: This should go when we initialize and validate materials. That will make it consistent with ADSIM's workflow
-    log_print("   ✓ Element SWRC models cached")
-
     # ── Build sparsity pattern ────────────────────────────────────────
+    # Note: Cache and elem_props are precomputed in kernel.jl and passed as arguments
     A = build_richards_sparsity(mesh)
     log_print(@sprintf("   ✓ Sparse matrix: %d nonzeros (%.2f%% density)",
                         nnz(A), 100.0 * nnz(A) / mesh.num_nodes^2))
 
-    # ── Build Dirichlet BCs (from initialize_variables.jl) ────────────
-    dbc_nodes, dbc_vals = build_dirichlet_lists(mesh, materials)
-    log_print("   ✓ Dirichlet BCs: $(length(dbc_nodes)) nodes") #[LZC]: Same as before. See where boundary conditions are initialized and work consistently with that. 
+    # ── Mark Dirichlet BCs in P_boundary_water masking matrix ─────────
+    apply_water_dirichlet_bc!(mesh, materials)
+    n_bc_nodes = count(P_boundary_water .== 0)
+    log_print("   ✓ Dirichlet BC nodes marked: $n_bc_nodes nodes")
+
+    # ── Initialize water flow boundary conditions ─────────────────────
+    zero_flow_vectors_water!(mesh.num_nodes)
+    boundary_influences = get_boundary_node_influences(mesh)
+    apply_boundary_flows_water!(mesh, q_boundary_water, boundary_influences.node_influences)
+    n_neumann_nodes = count(q_boundary_water .!= 0.0)
+    log_print("   ✓ Neumann BC nodes initialized: $n_neumann_nodes nodes")
+
     log_print(@sprintf("   ✓ Initial h: min=%.4f, max=%.4f", minimum(h), maximum(h)))
 
     # ── Time tracking ─────────────────────────────────────────────────
@@ -446,14 +458,14 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
 
     for step in 1:n_steps
         n_iter = picard_richards!(h_new, h, mesh, elem_props, dt, e_g,
-                                   dbc_nodes, dbc_vals, A, cache;
-                                   tol=1e-8, max_iter=100, ω=1.0) #[LZC] this is the actual solver call. Please do a better job commenting the code.
+                                   A, cache;
+                                   tol=1e-8, max_iter=100, ω=1.0)
 
         h .= h_new
         current_time += dt
 
-        # Re-enforce BCs on global water variables
-        enforce_water_dirichlet_bc!(mesh, materials) #[LZC]: Explain this to me next time.
+        # Re-enforce BCs on global water variables (ensures exact BC values after Picard)
+        enforce_water_dirichlet_bc!(mesh, materials)
 
         if save_data || step == n_steps
             progress = 100.0 * step / n_steps

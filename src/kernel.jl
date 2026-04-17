@@ -188,7 +188,17 @@ function main()
             log_print("   ✓ SWRC model parameters validated")
         end
 
-        # Step 3.4: Check for existing checkpoint from previous stage
+        # Step 3.4: Precompute element water properties (for Richards solver)
+        # This must be done after K_sat computation and SWRC validation
+        elem_props_cache = nothing
+        water_flow_enabled = get(calc_params["solver_settings"], "water_flow", 0) == 1
+        if water_flow_enabled
+            log_print("\nPrecomputing element water properties...")
+            elem_props_cache = precompute_element_water_props(mesh, materials)
+            log_print("   ✓ Element SWRC models cached ($(length(elem_props_cache)) elements)")
+        end
+
+        # Step 3.5: Check for existing checkpoint from previous stage
         checkpoint_file, prev_stage = find_latest_checkpoint(project_name, output_dir)
         checkpoint_loaded = false
         initial_state = nothing
@@ -278,6 +288,14 @@ function main()
         log_print("\n[6/8] Initializing shape functions")
         initialize_shape_functions!(mesh)
         log_print("   ✓ Shape functions and Jacobians precomputed")
+
+        # Step 6.5: Build Richards cache (if water flow is enabled)
+        richards_cache = nothing
+        if water_flow_enabled
+            log_print("\n[6.5/8] Building Richards solver cache")
+            richards_cache = build_richards_cache(mesh)
+            log_print("   ✓ Cache built for $(mesh.num_elements) elements")
+        end
         
         log_print("\n[7/8] Calculating time step information")
         time_data, limiting_scale = calculate_time_step_info(mesh, materials, calc_params)
@@ -298,7 +316,9 @@ function main()
  
         if water_flow_enabled #Richard's solver #[LZC] Please do a better job commenting the code. 
             log_print("\n[8/8] Running water flow solver (Richards equation)")
-            final_state = implicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
+            final_state = implicit_richards_solver(mesh, materials, calc_params, time_data, 
+                                                   project_name, log_print, 
+                                                   richards_cache, elem_props_cache, initial_state)
         else #Multi gas advection diffusion explicit solver
             log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
             final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
