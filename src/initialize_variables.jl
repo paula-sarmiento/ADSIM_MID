@@ -42,6 +42,9 @@ global S_r::Vector{Float64} = Float64[]
 global P_water::Vector{Float64} = Float64[]
 global v_water::Matrix{Float64} = zeros(Float64, 0, 2)
 
+# Water BC masking (1 = free node, 0 = Dirichlet BC node)
+global P_boundary_water::Matrix{Int} = Matrix{Int}(undef, 0, 0)
+
 # Time derivatives
 global dC_g_dt::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global dT_dt::Vector{Float64} = Float64[]
@@ -71,7 +74,7 @@ function zero_variables!(mesh, materials)
     global C_g, P, T, v, P_boundary, λ_bc, boundary_node_influences
     global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt, dtheta_dt
-    global h, theta_w, S_r, P_water, v_water
+    global h, theta_w, S_r, P_water, v_water, P_boundary_water
   
     # Set dimensions
     NDim = 2  # Number of spatial dimensions - TODO: generalize for 3D
@@ -114,6 +117,9 @@ function zero_variables!(mesh, materials)
     S_r = zeros(Float64, Nnodes)         # Water saturation [-]
     P_water = zeros(Float64, Nnodes)     # Water pressure [Pa]
     v_water = zeros(Float64, Nnodes, NDim)  # Water velocity [m/s]
+    
+    # Initialize water BC mask (1 = free, 0 = BC constrained)
+    P_boundary_water = ones(Int, Nnodes, 1)
     
 end
 
@@ -474,11 +480,20 @@ This is the PRIMARY water BC - if specified, it takes precedence over pressure h
 function apply_water_volumetric_content_bc!(mesh, materials)
     global theta_w, h
     
+    # Helper function: find node's material (use first adjacent element's material)
+    function get_node_material(mesh_data, node_id)
+        for elem_id in 1:mesh_data.num_elements
+            element_nodes = get_element_nodes(mesh_data, elem_id)
+            if node_id in element_nodes
+                return get_element_material(mesh_data, elem_id)
+            end
+        end
+        return nothing
+    end
+    
     # Apply volumetric content BCs - convert θ to h (primary state for BCs)
     for (node_id, theta_bc) in mesh.volumetric_content_bc
-        h[node_id] = theta_bc  # First convert and store as h (primary)
-        
-        # Recover θ from h via SWRC for consistency
+        # Recover h from θ via SWRC inversion
         material_idx = get_node_material(mesh, node_id)
         if material_idx !== nothing
             soil_name = materials.soil_dictionary[material_idx]
@@ -560,6 +575,45 @@ function apply_water_flux_bc!(mesh)
             q_flux_water[node_id] = flux_bc
         end
     end
+end
+
+
+"""
+    apply_water_dirichlet_bc!(mesh::MeshData, materials)
+
+Mark water Dirichlet boundary condition nodes in P_boundary_water.
+Sets P_boundary_water[node_id, 1] = 0 for nodes with prescribed head or content.
+
+Priority hierarchy:
+1. volumetric_content_bc (highest) - prescribed water content θ_w
+2. pressure_head_bc (secondary) - prescribed matric head h
+
+# Arguments
+- `mesh::MeshData`: Mesh containing BC dictionaries
+- `materials`: Material properties (needed for SWRC models in enforce functions)
+
+# Note
+- Modifies global variable `P_boundary_water`
+- Called once during solver initialization
+- Nodes without BCs remain at P_boundary_water[node_id, 1] = 1 (free)
+"""
+function apply_water_dirichlet_bc!(mesh::MeshData, materials)
+    global P_boundary_water
+    
+    # Priority 1: Volumetric content BC (highest priority)
+    for (node_id, theta_bc) in mesh.volumetric_content_bc
+        P_boundary_water[node_id, 1] = 0  # Node is constrained
+    end
+    
+    # Priority 2: Pressure head BC (secondary priority)
+    for (node_id, h_bc) in mesh.pressure_head_bc
+        # Only mark if not already marked by Priority 1
+        if !haskey(mesh.volumetric_content_bc, node_id)
+            P_boundary_water[node_id, 1] = 0  # Node is constrained
+        end
+    end
+    
+    return nothing
 end
 
 
