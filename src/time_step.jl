@@ -470,6 +470,23 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
     # Get time per load step (when data is saved)
     time_data.time_per_step = calc_params["time_stepping"]["time_per_step"]
     
+    # HOTFIX: For water-flow-only (Richards equation) with no transport/reaction,
+    # critical_dt may be Inf. Use user-specified time_per_step as the actual time step.
+    if !isfinite(time_data.actual_dt)
+        # Check if this is water-flow-only case
+        solver_settings = get(calc_params, "solver_settings", Dict())
+        water_flow = get(solver_settings, "water_flow", 0)
+        diffusion = get(solver_settings, "diffusion", 0)
+        advection = get(solver_settings, "advection", 0)
+        reaction = get(solver_settings, "reaction_kinetics", 0)
+        
+        if water_flow == 1 && diffusion == 0 && advection == 0 && reaction == 0
+            # Use time_per_step as the actual time step for water-flow-only
+            time_data.actual_dt = time_data.time_per_step
+            limiting_scale = "Water-flow-only (user-specified dt)"
+        end
+    end
+    
     # Calculate number of time steps per load step
     time_data.num_steps_per_load = ceil(Int, time_data.time_per_step / time_data.actual_dt)
     

@@ -3,13 +3,7 @@
 
 Module for writing VTK output files for ADSIM visualization in ParaView.
 
-This module provides functionality to export simulation results in VTK (Visualization Toolkit)
-format, including mesh data with nodal scalar and vector fields.
-
-For 2D simulations, velocity vectors have 2 components (x, y).
-For 3D simulations, velocity vectors have 3 components (x, y, z).
-
-Note: This module requires read_mesh.jl to be included first to access the MeshData type.
+Exports simulation results in VTK (Visualization Toolkit) format.
 """
 
 module WriteVTK
