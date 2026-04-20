@@ -27,156 +27,47 @@ using .ShapeFunctions
 using .WriteVTK
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# RichardsCache: precomputed physical derivatives from ShapeFunctions
-# ══════════════════════════════════════════════════════════════════════════════
-
-"""
-    RichardsCache
-
-Precomputed element data for the implicit Richards solver.
-Built once from ADSIM's ShapeFunctions module before the time loop.
-
-Convention: Bp[e, p, :, :] is [2×4] where row 1 = ∂N/∂x, row 2 = ∂N/∂y.
-This is the transpose of ADSIM's dN_dx [4×2].
-"""
-struct RichardsCache
-    Bp      :: Array{Float64, 4}       # [ne, 4, 2, 4]
-    detJ    :: Matrix{Float64}         # [ne, 4]
-    Np      :: Vector{Vector{Float64}} # [4][4]
-    A_e     :: Vector{Float64}         # [ne]
-    weights :: Vector{Float64}         # [4]
-end
-
-"""
-    build_richards_cache(mesh) → RichardsCache
-
-Build precomputed cache from ADSIM's ShapeFunctions module.
-Must be called AFTER `initialize_shape_functions!(mesh)` in kernel.jl.
-"""
-function build_richards_cache(mesh) :: RichardsCache
-    ne = mesh.num_elements
-    weights = ShapeFunctions.get_gauss_weights()
-    Np = [copy(ShapeFunctions.get_N(p)) for p in 1:4]
-
-    Bp_all   = zeros(Float64, ne, 4, 2, 4)
-    detJ_all = zeros(Float64, ne, 4)
-    A_e_all  = zeros(Float64, ne)
-
-    for e in 1:ne
-        area = 0.0
-        for p in 1:4
-            B_iso = ShapeFunctions.get_B(p)
-            invJ  = ShapeFunctions.get_invJ(e, p)
-            dJ    = ShapeFunctions.get_detJ(e, p)
-
-            dN_dx = B_iso * invJ   # [4×2]
-            for a in 1:4
-                Bp_all[e, p, 1, a] = dN_dx[a, 1]   # ∂Na/∂x
-                Bp_all[e, p, 2, a] = dN_dx[a, 2]   # ∂Na/∂y
-            end
-
-            detJ_all[e, p] = dJ
-            area += dJ * weights[p]
-        end
-        A_e_all[e] = area
-    end
-
-    return RichardsCache(Bp_all, detJ_all, Np, A_e_all, weights)
-end
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # Element matrices: lumped capacity + anisotropic stiffness
-# ══════════════════════════════════════════════════════════════════════════════
 
 """
     element_matrices_aniso!(Aᵉ, Rᵉ, hᵉ_curr, hᵉ_prev, eprops, Δt, e_g, cache, e)
 
-Compute element system matrix Aᵉ (4×4) and residual Rᵉ (4) for one element.
-Modified in-place for performance.
+Compute element system matrix Aᵉ (4×4) and residual Rᵉ (4) for one Q4 element.
 
-**Scope:** One element e with 4 nodes, 2×2 Gauss quadrature (4 points)
+# Physical Model
+Mixed-form Richards equation: ∂θ/∂t + ∇·[-K(h)(∇h + e_g)] = 0
 
-**Physical Equations Integrated:**
+Weak form (Backward Euler, implicit):
+- LHS: ∫(∇Nₐ · K∇N_b) dΩ + ∫(Nₐ · C(h)/Δt · N_b) dΩ
+- RHS: -∫(∇Nₐ · K∇h) dΩ - ∫(∇Nₐ · K·e_g) dΩ - ∫(Nₐ · (θ_curr-θ_prev)/Δt) dΩ
 
-Mixed-form Richards (pressure head formulation):
-  ∂θ/∂t + ∇·[-K(∇h + e_g)] = 0
+# Integration
+2×2 Gauss quadrature (4 points per element):
+- At each point: interpolate h, compute K(h) and C(h)
+- K is anisotropic: K = [Kₓ  0]  (Kₓ, Kᵧ from SWRC model)
+                         [ 0 Kᵧ]
+- Shape derivatives precomputed in cache
 
-Weak form (test with shape function Nₐ):
-  ∫_Ω Nₐ ∂θ/∂t dΩ + ∫_Ω ∇Nₐ · [-K(∇h + e_g)] dΩ = 0
+# Key Details
+- Lumped mass for temporal term (ensures discrete mass conservation)
+- Gravity vector e_g = [0, -1] enters residual only (not matrix)
+- K and C recomputed each Picard iteration (nonlinear)
 
-Backward Euler discretization (Δt > 0):
-  ∫_Ω Nₐ (θ^(n+1) - θⁿ)/Δt dΩ + ∫_Ω ∇Nₐ · K(∇hⁿ⁺¹ + e_g) dΩ = 0
+# Arguments
+- Aᵉ[4,4]: Element matrix (output, zeroed at start)
+- Rᵉ[4]: Element residual (output, zeroed at start)
+- hᵉ_curr[4]: Current pressure head at 4 nodes
+- hᵉ_prev[4]: Previous pressure head at 4 nodes
+- eprops: Element SWRC properties
+- Δt: Time step
+- e_g: Gravity vector
+- cache: Precomputed shape functions, Jacobians
+- e: Element index
 
-**LHS System Matrix Aᵉ[a,b]:**
-  Aᵉ[a,b] = ∫_Ω ∇Nₐ · K(∇N_b) dΩ    [spatial stiffness]
-          + ∫_Ω Nₐ · Cₘ(h) / Δt dΩ    [temporal capacity, lumped]
-
-  Computed iteratively with Picard: K and Cₘ depend on current h
-
-**RHS Residual Rᵉ[a]:**
-  Rᵉ[a] = -∫_Ω ∇Nₐ · K(∇h) dΩ       [pressure-driven flux]
-        - ∫_Ω ∇Nₐ · K(e_g) dΩ       [gravity-driven flux (body force)]
-        - ∫_Ω Nₐ · (θ_curr - θ_prev)/Δt dΩ  [temporal accumulation, lumped]
-
-**Arguments:**
-  - `Aᵉ[4,4]`: Element matrix (output, modified in-place)
-  - `Rᵉ[4]`: Element residual (output, modified in-place)
-  - `hᵉ_curr[4]`: Current pressure head at 4 nodes
-  - `hᵉ_prev[4]`: Previous pressure head at 4 nodes
-  - `eprops::ElementWaterProps`: SWRC model (theta, C_moist, K_h_x, K_h_y via dispatch)
-  - `Δt::Float64`: Time step
-  - `e_g[2]`: Gravity vector (usually [0, -1] for downward)
-  - `cache::RichardsCache`: Precomputed shape functions, Jacobians
-  - `e::Int`: Element index (into cache arrays)
-
-**Anisotropy:**
-  K is diagonal in principal axes: K = [Kₓ  0 ]
-                                       [ 0 Kᵧ]
-  In 2D FEM: Kₓ = K_h_x(model, h), Kᵧ = K_h_y(model, h)
-  Dispatch: These functions called for EACH Gauss point, updated with current h
-
-**Integration:** 2×2 Gauss quadrature
-  - 4 Gauss points per element
-  - Each point: evaluate h by interpolation, compute K and C
-  - Shape derivatives precomputed in cache (Bp array)
-  - Jacobian determinant in cache (detJ array)
-
-**Gravity Sign Convention (Critical):**
-  e_g = [0, -1] = gravity points DOWNWARD (negative y)
-  In code (line 151): Rᵉ[a] += (Bxa * Kx * e_g[1] + Bya * Ky * e_g[2]) * w
-                            = (0 + Bya * Ky * (-1)) * w
-                            = -Bya * Ky * w
-  
-  At Gauss point with Bya > 0 (upper part of element):
-    → Gravity term is NEGATIVE
-    → Pulls water DOWN from upper region
-    → Physics: ✓ Correct
-
-**Lumped Mass Strategy:**
-  Full matrix entry for temporal term: ∫ Nₐ Nᵦ dΩ would give dense matrix
-  Lumped mass: Only diagonal, M_lumped[a] = ∫ Nₐ dΩ / 4
-             (equal distribution since ∫(N₁+N₂+N₃+N₄) = area)
-  
-  Advantage: ✓ Solves faster (diagonal ≈ trivial)
-            ✓ Discrete mass conservation (LHS = RHS for source-free case)
-  Cost: Slightly less accurate per step (but unconditionally stable)
-
-**Performance:**
-  • No conditional branches (vectorized over Gauss points)
-  • Uses precomputed shape data (cache)
-  • Scales: O(1) per element (fixed 4 Gauss points)
-
-**Picard Nonlinearity:**
-  • Solves A_nonlinear * δh = R_nonlinear iteratively
-  • K and C recomputed each Picard iteration (depend on h)
-  • A and R assembled fresh from current h (lines 106-155)
-  • Converges when ||δh|| < tol (typically 5-20 iterations)
-
-**See Also:**
-  assemble_richards!() — Global assembly loop over elements
-  swrc_models.jl — K_h_x, K_h_y, theta, C_moist dispatch
+# Notes
+- Modified in-place for performance
+- Dispatcher to SWRC model for K_h_x, K_h_y, theta, C_moist
+- References: Celia et al. (1990)
 """
 function element_matrices_aniso!(
     Aᵉ      :: Matrix{Float64},
@@ -246,9 +137,7 @@ function element_matrices_aniso!(
 end
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Global assembly + sparsity pattern
-# ══════════════════════════════════════════════════════════════════════════════
 
 """
     build_richards_sparsity(mesh) → SparseMatrixCSC
@@ -272,66 +161,36 @@ end
 """
     assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache)
 
-Assemble global sparse system matrix A and residual vector R from element contributions.
-Applies boundary conditions (Dirichlet + Neumann) in-place.
+Assemble global sparse system matrix A and residual vector R.
+Applies Dirichlet and Neumann boundary conditions.
 
-**Global System Assembly:**
-  Loop over all elements:
-    → Compute element matrix Aᵉ[4,4] and residual Rᵉ[4] via element_matrices_aniso!()
-    → Scatter-add to global matrix A and vector R
-  
-  Result: A is (n × n) sparse, R is (n,) vector, where n = num_nodes
+# Algorithm
+1. Loop over all elements
+2. Compute element matrix and residual via element_matrices_aniso!()
+3. Scatter-add contributions to global A and R
+4. Apply Dirichlet masking (zero rows at prescribed nodes)
+5. Add Neumann flux contributions to residual
 
-**Boundary Condition Enforcement:**
+# Boundary Conditions
+- Dirichlet (prescribed head): A[i,:] = 0, A[i,i] = 1, R[i] = 0
+  (Prevents updates at prescribed nodes)
+- Neumann (prescribed flux): Add to R at non-Dirichlet nodes
 
-  PHASE 1 — Dirichlet BC (prescribed head h):
-    For each node i with prescribed h:
-      • A[i,:] ← 0             [zero entire row]
-      • A[i,i] ← 1             [identity on diagonal]
-      • R[i] ← 0               [zero residual]
-    
-    Effect: When solving A δ = R:
-      Aᵢᵢ * δᵢ = 0  →  δᵢ = 0
-      No update to h[i] (stays fixed as prescribed) ✓
-    
-    Marker: P_boundary_water[i,1] == 0 indicates Dirichlet node
+# Arguments
+- A: Global sparse matrix (modified in-place)
+- R: Global residual vector (modified in-place)
+- h_curr: Current pressure head
+- h_prev: Previous pressure head
+- mesh: Mesh connectivity
+- elem_props: Element SWRC properties
+- Δt: Time step
+- e_g: Gravity vector
+- cache: Precomputed shape function data
 
-  PHASE 2 — Neumann BC (prescribed flux q):
-    For each node i WITHOUT Dirichlet BC:
-      if q_boundary_water[i] ≠ 0:
-        • R[i] += q_boundary_water[i]
-    
-    Effect: Flux enters momentum balance equation
-    Positive flux: q > 0  → inflow (increases h)
-    Negative flux: q < 0  → outflow (decreases h)
-    
-  **Timing:** BCs applied ONCE per assembly, NOT in Picard loop ✓
-    (Correct per Celia et al. 1990; redundant application would be wrong)
-
-**Arguments:**
-  - `A`: Global sparse matrix (modified in-place)
-  - `R`: Global residual vector (modified in-place)
-  - `h_curr`: Current pressure head (length = n_nodes)
-  - `h_prev`: Previous pressure head (length = n_nodes)
-  - `mesh`: Mesh connectivity and BC node lists
-  - `elem_props`: Element SWRC properties
-  - `Δt`: Time step
-  - `e_g`: Gravity vector
-  - `cache`: Precomputed shape function data
-
-**Prerequisites:**
-  • A sparsity pattern already built (call build_richards_sparsity once)
-  • P_boundary_water populated with Dirichlet markers
-  • q_boundary_water pre-computed (from initialize_flows)
-
-**Performance:**
-  • Element loop: O(n_elements)
-  • BC loops: O(n_dirichlet) + O(n_neumann)  [typically small]
-  • Total: O(n_elements) dominated cost
-
-**See Also:**
-  element_matrices_aniso!() — Local element computation
-  picard_richards!() — Calls this function repeatedly with updated h
+# Notes
+- Assumes sparsity pattern already built (build_richards_sparsity)
+- P_boundary_water and q_boundary_water must be pre-populated
+- BCs applied once per assembly (not in Picard loop)
 """
 function assemble_richards!(
     A      :: SparseMatrixCSC{Float64, Int},
@@ -416,137 +275,52 @@ function assemble_richards!(
 end
 
 
+
+
 #[LZC-RESOLVED] Neumann BC assembly: Flow BCs ARE assembled a priori at solver startup
-# via zero_flow_vectors_water!() + apply_boundary_flows_water!() (line 433)
-# Pre-computed q_boundary_water[i] is added to residual in assemble_richards!() (line 267)
-# Alternative: apply_neumann_edge_richards!() (below) for edge-based assembly (not used — kept for reference)
-"""
-    apply_neumann_edge_richards!(R, node_i, node_j, q_bar, coords) 
-
-Add Neumann flux to residual for edge (node_i, node_j).
-q_bar > 0 = flux INTO domain. 2-point Gauss on edge.
-"""
-function apply_neumann_edge_richards!(
-    R      :: Vector{Float64},
-    node_i :: Int,
-    node_j :: Int,
-    q_bar  :: Float64,
-    coords :: Matrix{Float64}
-)
-    xi, yi = coords[node_i, 1], coords[node_i, 2]
-    xj, yj = coords[node_j, 1], coords[node_j, 2]
-    l_e = sqrt((xj - xi)^2 + (yj - yi)^2)
-
-    inv_sqrt3 = 1.0 / sqrt(3.0)
-    for s in (-inv_sqrt3, inv_sqrt3)
-        R[node_i] += 0.5 * (1.0 - s) * q_bar * (l_e / 2.0)
-        R[node_j] += 0.5 * (1.0 + s) * q_bar * (l_e / 2.0)
-    end
-    return nothing
-end
+# via zero_flow_vectors_water!() + apply_boundary_flows_water!()
+# Pre-computed q_boundary_water[i] is added to the residual in assemble_richards!()
+# Alternative: apply_neumann_edge_richards!() (now in initialize_variables.jl) for edge-based
+# assembly (not used — kept for reference)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Picard iteration (one time step)
-# ══════════════════════════════════════════════════════════════════════════════
+# Picard iteration solver (one time step)
 
 """
-    picard_richards!(h_curr, h_prev, mesh, elem_props, Δt, e_g, A, cache; tol, max_iter, ω)
+    picard_richards!(h_curr, h_prev, mesh, elem_props, Δt, e_g, A, cache; kwargs...)
 
-Picard iteration for one time step: solves implicit Richards equation A(h) δh = R(h)
-via fixed-point iteration.
+Picard iteration solver for one time step.
 
-**Algorithm (one time step):**
-  h_curr ← h_prev  [initial guess]
-  
-  Loop m = 1 to max_iter:
-    1. ASSEMBLE: A_m, R_m = assemble_richards!(h_curr)  [nonlinear in h]
-    2. SOLVE: δh = A_m \R_m                            [sparse backslash]
-    3. CHECK: if ||δh||∞ < tol, return m                [converged]
-    4. UPDATE: h_curr ← h_curr + ω * δh                 [Newton step]
-  
-  Return: Number of iterations used (or max_iter if not converged)
+Solves the implicit Richards equation A(h) * delta_h = R(h) via fixed-point iteration.
 
-**Nonlinearity Source:**
-  • K(h) — hydraulic conductivity depends on pressure head
-  • C(h) — moisture capacity depends on pressure head
-  
-  Both depend on SWRC model (soil water retention curve)
-  Examples: Van Genuchten, CavalcanteZornberg, ConstantSoil, LinearSoil
+# Algorithm
+1. ASSEMBLE: Compute A and R at current h (nonlinear in h)
+2. SOLVE: delta_h = A \\ R
+3. CHECK: if ||delta_h||_infinity < tol, converged
+4. UPDATE: h_new = h_curr + omega * delta_h
+5. REPEAT until convergence or max_iter reached
 
-  Fixed-point iteration: Solve A(hᵐ) δ = R(hᵐ), then update hᵐ⁺¹ = hᵐ + δ
+# Arguments
+- h_curr: Current pressure head (modified in-place)
+- h_prev: Previous time step pressure head
+- mesh: Mesh structure
+- elem_props: Element SWRC properties
+- Δt: Time step
+- e_g: Gravity vector [gx, gy]
+- A: Global sparse matrix (reused for efficiency)
+- cache: Precomputed shape function data
+- tol = 1e-8: Convergence tolerance
+- max_iter = 100: Maximum iterations (safety limit)
+- ω = 1.0: Relaxation parameter (Newton step size)
 
-**Convergence Criterion:**
-  δh_norm = max(|δ[i]|) over all nodes
-  
-  Interpretation: Maximum pressure head change (units: cm or m)
-  Typical value when converging: 1e-8 to 1e-6 cm
-  
-  Stops when ALL nodes satisfy: |δ[i]| ≤ tol
-  Default tol = 1e-8 cm (very tight, typically 5-20 iterations)
+# Returns
+Integer: Number of iterations performed
 
-**Relaxation Parameter:**
-  ω = 1.0 (full Newton step, no damping)
-  
-  For difficult problems:
-    ω < 1 → underrelax (slower convergence, more stable)
-    ω > 1 → overrelax (faster but may diverge)
-  
-  Current: ω = 1.0 found to be stable for all tested cases
-
-**Non-Convergence Behavior:**
-  if m == max_iter and ||δh|| > tol:
-    @warn "Picard did not converge in $max_iter iterations"
-    → returns max_iter anyway
-    → time step is ACCEPTED (Backward Euler is unconditionally stable)
-    → Solution may be less accurate but valid
-    
-  Best practice: If non-convergence occurs:
-    1. Reduce Δt (smaller steps → converges faster)
-    2. Lower tolerance (tol = 1e-6, not 1e-8)
-    3. Check boundary conditions validity
-
-**Boundary Conditions in Iteration:**
-  • BC masking in assemble_richards!() enforces Dirichlet
-  • P_boundary_water[i,1] == 0 → h[i] automatic (δ[i] = 0)
-  • Neumann (flux) BCs automatic via residual term
-  • NO explicit BC re-application needed in loop ✓
-
-**Arguments:**
-  - `h_curr[n]`: Current pressure head (modified in-place)
-  - `h_prev[n]`: Previous pressure head (used to compute temporal term)
-  - `mesh`: Mesh structure
-  - `elem_props`: Element properties
-  - `Δt`: Time step
-  - `e_g`: Gravity vector
-  - `A`: Global sparse matrix (sparsity reused)
-  - `cache`: Precomputed shape data
-  - `tol = 1e-8`: Convergence tolerance (cm or problem units)
-  - `max_iter = 100`: Maximum iterations (safety limit)
-  - `ω = 1.0`: Relaxation parameter (Newton step size)
-
-**Returns:**
-  Integer: Number of iterations performed
-
-**Performance:**
-  • Assembly: O(n_elements) per iteration
-  • Sparse solve: O(n log n) typical for 2D
-  • Total per step: (5-20) × [O(n_elements) + O(n log n)]
-  
-  Example (n=117, ne=96):
-    → 10 iterations × 0.1ms/assembly = 1ms total
-    → Typical for this test case
-
-**References:**
-  • Celia et al. (1990) "An Efficient Iterative Scheme..."
-    → Standard Picard iteration for mixed-form Richards
-  • Celia et al. (1989) "On the Convergence and Stability of the Standard Picard..."
-    → Convergence analysis, typically 3-50 iterations for realistic problems
-
-**See Also:**
-  assemble_richards!() — System assembly with current h
-  element_matrices_aniso!() — Low-level computation
-  implicit_richards_solver!() — Main time loop calling this
+# Notes
+- Convergence criterion: all nodes satisfy |delta_h[i]| <= tol
+- K(h) and C(h) are recomputed each iteration (nonlinear)
+- Backward Euler is unconditionally stable (solution accepted even if max_iter reached)
+- References: Celia et al. (1990), standard Picard iteration theory
 """
 function picard_richards!(
     h_curr     :: Vector{Float64},
@@ -567,42 +341,27 @@ function picard_richards!(
     h_curr .= h_prev
 
     for m in 1:max_iter
+        # Step 1: Assemble nonlinear system (A and R depend on current h)
         assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache)
-        # Masking is now handled in assemble_richards!() via P_boundary_water
 
-        δ = A \ R
-        δ_norm = maximum(abs.(δ))
+        # Step 2: Solve for pressure head increments
+        delta = A \ R
+        delta_norm = maximum(abs.(delta))
 
-        if δ_norm < tol
+        # Step 3: Check convergence
+        if delta_norm < tol
             return m
         end
 
-        h_curr .+= ω .* δ
+        # Step 4: Update pressure head
+        h_curr .+= ω .* delta
     end
 
+    # Non-convergence: Backward Euler is unconditionally stable so solution is accepted
     @warn "Picard did not converge in $max_iter iterations"
     return max_iter
 end
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VTK output wrapper
-# ══════════════════════════════════════════════════════════════════════════════
-
-"""
-    write_richards_output(mesh, output_counter, current_time, project_name)
-
-Write VTK output using ADSIM global water state variables.
-"""
-function write_richards_output(mesh, output_counter::Int, current_time::Float64,
-                                project_name::String)
-    global h, theta_w, S_r, P_water, v_water
-
-    output_dir = "output"
-    filename = joinpath(output_dir, project_name * "_water")
-    write_vtk_file_water(filename, output_counter, current_time,
-                          mesh, h, theta_w, S_r, P_water, v_water)
-end
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -722,7 +481,12 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     else
         log_print("      Load step 0 (0.0%)")
         update_water_globals!(elem_props, mesh, e_g, cache, rho_w, g_mag)
-        write_richards_output(mesh, 0, 0.0, project_name)
+        
+        # ── Write initial condition (step 0) ──────────────────────────────
+        output_dir = "output"
+        filename = joinpath(output_dir, project_name * "_water")
+        write_vtk_file_water(filename, 0, 0.0, mesh, h, theta_w, S_r, P_water, v_water)
+        
         current_time     = 0.0
         next_output_time = load_step_time
         output_counter   = 1
@@ -733,14 +497,30 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     save_data = false
 
     for step in 1:n_steps
+        # ──────────────────────────────────────────────────────────────────────────
+        # PICARD ITERATION: Solve Richards equation for this time step
+        # ──────────────────────────────────────────────────────────────────────────
+        # Input:  h_new = h_prev (initial guess for Picard iteration)
+        #         h     = h_curr from previous time step
+        # Output: h_new = converged pressure head solution at time t+Δt
+        #         n_iter = number of Picard iterations performed
         n_iter = picard_richards!(h_new, h, mesh, elem_props, dt, e_g,
                                    A, cache;
                                    tol=1e-8, max_iter=100, ω=1.0)
 
-        h .= h_new
-        current_time += dt
+        # ──────────────────────────────────────────────────────────────────────────
+        # Accept time step and update persistent state
+        # ──────────────────────────────────────────────────────────────────────────
+        h .= h_new           # Copy converged solution into persistent h variable
+        current_time += dt   # Advance time counter
 
-        # Re-enforce BCs on global water variables (ensures exact BC values after Picard)
+        # ──────────────────────────────────────────────────────────────────────────
+        # Update global water variables from converged h
+        # ──────────────────────────────────────────────────────────────────────────
+        # enforce_water_dirichlet_bc!() does two things:
+        #   1. Mark Dirichlet nodes in P_boundary_water mask (P_boundary_water[i,1]=0)
+        #   2. Recompute water state (θ_w, S_r, P_water) from h via SWRC model
+        #      This ensures all output variables match the converged h solution
         enforce_water_dirichlet_bc!(mesh, materials)
 
         if save_data || step == n_steps
@@ -750,7 +530,12 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
                                 calc_params["units"]["time_unit"], n_iter))
 
             update_water_globals!(elem_props, mesh, e_g, cache, rho_w, g_mag)
-            write_richards_output(mesh, output_counter, current_time, project_name)
+            
+            # ── Write VTK output ─────────────────────────────────────────
+            output_dir = "output"
+            filename = joinpath(output_dir, project_name * "_water")
+            write_vtk_file_water(filename, output_counter, current_time,
+                                  mesh, h, theta_w, S_r, P_water, v_water)
 
             next_output_time += load_step_time
             output_counter += 1
