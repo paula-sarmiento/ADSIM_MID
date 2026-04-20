@@ -45,6 +45,9 @@ global v_water::Matrix{Float64} = zeros(Float64, 0, 2)
 # Water BC masking (1 = free node, 0 = Dirichlet BC node)
 global P_boundary_water::Matrix{Int} = Matrix{Int}(undef, 0, 0)
 
+# Water flux boundary conditions
+global q_flux_water::Vector{Float64} = Float64[]
+
 # Time derivatives
 global dC_g_dt::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
 global dT_dt::Vector{Float64} = Float64[]
@@ -74,7 +77,7 @@ function zero_variables!(mesh, materials)
     global C_g, P, T, v, P_boundary, λ_bc, boundary_node_influences
     global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt, dtheta_dt
-    global h, theta_w, S_r, P_water, v_water, P_boundary_water
+    global h, theta_w, S_r, P_water, v_water, P_boundary_water, q_flux_water
   
     # Set dimensions
     NDim = 2  # Number of spatial dimensions - TODO: generalize for 3D
@@ -120,6 +123,9 @@ function zero_variables!(mesh, materials)
     
     # Initialize water BC mask (1 = free, 0 = BC constrained)
     P_boundary_water = ones(Int, Nnodes, 1)
+    
+    # Initialize water flux boundary conditions
+    q_flux_water = zeros(Float64, Nnodes)
     
 end
 
@@ -366,10 +372,11 @@ function apply_initial_water_volumetric_content!(mesh, materials)
             soil_name = materials.soil_dictionary[material_idx]
             soil_props = get_soil_properties(materials, soil_name)
             
-            if soil_props !== nothing
+            if soil_props !== nothing && soil_props.water.swrc_model_instance !== nothing
+                wmodel = soil_props.water.swrc_model_instance
                 for node_id in element_nodes
                     theta_w[node_id] = theta_ic
-                    h[node_id] = soil_props.water.h_theta(theta_ic)
+                    h[node_id] = h_inv(wmodel, theta_ic)
                 end
             end
         end
@@ -422,18 +429,17 @@ end
 
 
 """
-    apply_water_initial_conditions!(mesh::MeshData, materials)
+    apply_water_initial_conditions!(mesh, materials)
 
-Apply all water initial conditions from mesh and materials (t=0).
-Calls individual functions in priority order.
+Apply all water initial conditions (t=0).
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure
-- `materials`: Material data structure
+- `mesh`: Mesh structure
+- `materials`: Material properties
 
-# Note
-- Modifies global variables: `theta_w`, `h`
-- Priority: volumetric_content IC > pressure_head IC
+# Priority
+1. volumetric_content IC
+2. pressure_head IC
 """
 function apply_water_initial_conditions!(mesh, materials)
     apply_initial_water_volumetric_content!(mesh, materials)  # Priority 1
@@ -442,18 +448,18 @@ end
 
 
 """
-    apply_water_boundary_conditions!(mesh::MeshData, materials)
+    apply_water_boundary_conditions!(mesh, materials)
 
-Apply all water boundary conditions from mesh (at t=0).
-Calls individual BC functions in priority order.
+Apply all water boundary conditions (t=0).
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure
-- `materials`: Material data structure
+- `mesh`: Mesh structure
+- `materials`: Material properties
 
-# Note
-- Modifies global variables: `theta_w`, `h`, `q_boundary_water`
-- Priority: volumetric_content BC > pressure_head BC > flux BC
+# Priority
+1. volumetric_content BC
+2. pressure_head BC
+3. flux BC
 """
 function apply_water_boundary_conditions!(mesh, materials)
     apply_water_volumetric_content_bc!(mesh, materials)  # Priority 1
@@ -477,19 +483,20 @@ This is the PRIMARY water BC - if specified, it takes precedence over pressure h
 - HIGHEST priority: Directly sets θ values
 - Recovers h from θ via SWRC inversion for consistency
 """
+function get_node_material(mesh_data, node_id)
+    """Find the material index for a node by locating its first adjacent element."""
+    for elem_id in 1:mesh_data.num_elements
+        element_nodes = get_element_nodes(mesh_data, elem_id)
+        if node_id in element_nodes
+            return get_element_material(mesh_data, elem_id)
+        end
+    end
+    return nothing
+end
+
+
 function apply_water_volumetric_content_bc!(mesh, materials)
     global theta_w, h
-    
-    # Helper function: find node's material (use first adjacent element's material)
-    function get_node_material(mesh_data, node_id)
-        for elem_id in 1:mesh_data.num_elements
-            element_nodes = get_element_nodes(mesh_data, elem_id)
-            if node_id in element_nodes
-                return get_element_material(mesh_data, elem_id)
-            end
-        end
-        return nothing
-    end
     
     # Apply volumetric content BCs - convert θ to h (primary state for BCs)
     for (node_id, theta_bc) in mesh.volumetric_content_bc
@@ -511,19 +518,18 @@ end
 
 
 """
-    apply_water_pressure_head_bc!(mesh::MeshData, materials)
+    apply_water_pressure_head_bc!(mesh, materials)
 
-Apply pressure head boundary conditions at t=0.
-This is the SECONDARY water BC - applied only if volumetric content is not specified.
+Apply pressure head boundary conditions (t=0).
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure containing water BC data
-- `materials`: Material data structure containing SWRC model closures
+- `mesh`: Mesh structure
+- `materials`: Material properties with SWRC
 
-# Note
-- Modifies global variables: `theta_w`, `h`
-- SECONDARY priority: Only applied if node doesn't have volumetric_content_bc
+# Notes
+- Modifies global theta_w and h
 - Converts prescribed h → θ via SWRC
+- Priority 2 (after volumetric content)
 """
 function apply_water_pressure_head_bc!(mesh, materials)
     global theta_w, h
@@ -555,15 +561,14 @@ end
 """
     apply_water_flux_bc!(mesh)
 
-Apply water flux (Neumann) boundary conditions at t=0.
-This is the TERTIARY water BC - least restrictive, allows flexibility.
+Apply water flux (Neumann) boundary conditions (t=0).
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure containing water BC data
+- `mesh`: Mesh structure with liquid_discharge_bc data
 
-# Note
-- LOWEST priority: Applied if neither volumetric_content_bc nor pressure_head_bc exist
-- Flux BCs initialize target volumetric flux q [m/s] for boundary nodes
+# Notes
+- Modifies global q_flux_water
+- Priority 3 (lowest - after head/content BCs)
 """
 function apply_water_flux_bc!(mesh)
     global q_flux_water
@@ -579,33 +584,79 @@ end
 
 
 """
-    apply_water_dirichlet_bc!(mesh::MeshData, materials)
+    apply_neumann_edge_richards!(R, node_i, node_j, q_bar, coords)
 
-Mark water Dirichlet boundary condition nodes in P_boundary_water.
-Sets P_boundary_water[node_id, 1] = 0 for nodes with prescribed head or content.
+Add Neumann flux BC to residual for edge (node_i, node_j).
 
-Priority hierarchy:
-1. volumetric_content_bc (highest) - prescribed water content θ_w
-2. pressure_head_bc (secondary) - prescribed matric head h
+Edge-based assembly via 2-point Gauss quadrature.
+**Note:** Not actively used; nodal flux BCs are pre-computed instead.
 
 # Arguments
-- `mesh::MeshData`: Mesh containing BC dictionaries
-- `materials`: Material properties (needed for SWRC models in enforce functions)
+- `R`: Residual vector (modified in-place)
+- `node_i`, `node_j`: Edge node IDs
+- `q_bar`: Prescribed volumetric flux [m/s]
+- `coords`: Node coordinates [n_nodes, 2]
 
-# Note
-- Modifies global variable `P_boundary_water`
-- Called once during solver initialization
-- Nodes without BCs remain at P_boundary_water[node_id, 1] = 1 (free)
+# Sign Convention
+- q > 0: inflow (increases h)
+- q < 0: outflow (decreases h)
+"""
+function apply_neumann_edge_richards!(
+    R      :: Vector{Float64},
+    node_i :: Int,
+    node_j :: Int,
+    q_bar  :: Float64,
+    coords :: Matrix{Float64}
+)
+    # ── Compute edge length ──────────────────────────────────────────
+    xi, yi = coords[node_i, 1], coords[node_i, 2]
+    xj, yj = coords[node_j, 1], coords[node_j, 2]
+    l_e = sqrt((xj - xi)^2 + (yj - yi)^2)
+
+    # ── 2-point Gauss quadrature: ξ = ±1/√3, w = 1 ────────────────
+    # Linear shape functions: N_i(ξ) = (1-ξ)/2, N_j(ξ) = (1+ξ)/2
+    inv_sqrt3 = 1.0 / sqrt(3.0)
+    for s in (-inv_sqrt3, inv_sqrt3)
+        # Shape function values at Gauss point s
+        N_i_s = 0.5 * (1.0 - s)  # Weight at node i
+        N_j_s = 0.5 * (1.0 + s)  # Weight at node j
+        
+        # Integrate: ∫ q_bar * N dξ * (l_e / 2)
+        # [l_e / 2 converts from isoparametric [-1,1] to physical]
+        flux_contribution = q_bar * (l_e / 2.0)
+        
+        R[node_i] += N_i_s * flux_contribution
+        R[node_j] += N_j_s * flux_contribution
+    end
+    
+    return nothing
+end
+
+
+"""
+    apply_water_dirichlet_bc!(mesh, materials)
+
+Mark water Dirichlet BC nodes in P_boundary_water.
+
+Sets P_boundary_water[node_id, 1] = 0 for prescribed nodes.
+
+# Priority
+1. volumetric_content_bc
+2. pressure_head_bc
+
+# Arguments
+- `mesh`: Mesh structure
+- `materials`: Material properties
 """
 function apply_water_dirichlet_bc!(mesh::MeshData, materials)
     global P_boundary_water
     
-    # Priority 1: Volumetric content BC (highest priority)
+    # Priority 1: Volumetric content BC (highest priority - used before normalization)
     for (node_id, theta_bc) in mesh.volumetric_content_bc
         P_boundary_water[node_id, 1] = 0  # Node is constrained
     end
     
-    # Priority 2: Pressure head BC (secondary priority)
+    # Priority 2: Pressure head BC (includes converted volumetric_content_bc after normalization)
     for (node_id, h_bc) in mesh.pressure_head_bc
         # Only mark if not already marked by Priority 1
         if !haskey(mesh.volumetric_content_bc, node_id)
@@ -665,20 +716,18 @@ end
 
 
 """
-    enforce_water_pressure_head_bc!(mesh::MeshData, materials)
+    enforce_water_pressure_head_bc!(mesh, materials)
 
-Enforce pressure head (matric head) Dirichlet boundary conditions during time-stepping.
-This is the SECONDARY water BC - applied only if volumetric content is not specified.
+Enforce pressure head Dirichlet BCs during time-stepping.
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure containing water BC data
-- `materials`: Material data structure containing SWRC model closures
+- `mesh`: Mesh structure
+- `materials`: Material properties
 
-# Note
-- Modifies global variables: `theta_w`, `h`
-- SECONDARY priority: Only applied if node doesn't have volumetric_content_bc
-- Pressure head BCs: Convert prescribed h → θ via SWRC
-- h[node_id] = h_bc (maintains prescribed pressure head)
+# Notes
+- Modifies global theta_w and h
+- Priority 2 (after volumetric content)
+- Converts h → θ via SWRC
 """
 function enforce_water_pressure_head_bc!(mesh, materials)
     global theta_w, h
@@ -718,16 +767,14 @@ end
 """
     enforce_water_flux_bc!(mesh)
 
-Enforce water flux (Neumann) boundary conditions during time-stepping.
-This is the TERTIARY water BC - least restrictive, allows flexibility.
+Enforce water flux (Neumann) BCs during time-stepping.
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure containing water BC data
+- `mesh`: Mesh structure with liquid_discharge_bc data
 
-# Note
-- Modifies global variables: `q_flux_water` (via interaction with solver)
-- LOWEST priority: Applied if neither volumetric_content_bc nor pressure_head_bc exist
-- Flux BCs: Maintain specified volumetric flux q [m/s]
+# Notes
+- Modifies global q_flux_water
+- Priority 3 (lowest - after head/content BCs)
 """
 function enforce_water_flux_bc!(mesh)
     global q_flux_water
@@ -743,22 +790,22 @@ end
 
 
 """
-    enforce_water_dirichlet_bc!(mesh::MeshData, materials)
+    enforce_water_dirichlet_bc!(mesh, materials)
 
-Apply all water Dirichlet boundary conditions with proper priority hierarchy.
-This function calls the individual BC enforcement functions in priority order:
-1. Volumetric content BC (highest priority)
-2. Pressure head BC (secondary)
-3. Flux BC (lowest priority)
+Apply all water Dirichlet BCs with priority hierarchy.
 
 # Arguments
-- `mesh::MeshData`: Mesh data structure containing water BC data
-- `materials`: Material data structure containing SWRC model closures
+- `mesh`: Mesh structure
+- `materials`: Material properties
 
-# Note
-- Modifies global variables: `theta_w`, `h`, `q_flux_water`
-- Called after each time step to re-enforce BC values
-- Priority hierarchy ensures no conflicting BCs are applied to same node
+# Priority
+1. volumetric_content_bc
+2. pressure_head_bc
+3. flux_bc
+
+# Notes
+- Modifies global theta_w, h, q_flux_water
+- Called after each time step
 """
 function enforce_water_dirichlet_bc!(mesh, materials)
     # Apply BCs in priority order

@@ -67,9 +67,8 @@ function main()
     project_name = ARGS[1]
 
     # Construct file paths from project name
-    # Assuming data files are in the data/ directory relative to src/
-    #data_dir = "src\\data"
-    data_dir = "data"
+    # Data files are in src/data/ directory
+    data_dir = "src/data"
     mesh_file = joinpath(data_dir, "$(project_name).mesh")
     calc_file = joinpath(data_dir, "$(project_name)_calc.toml")
     mat_file = joinpath(data_dir, "$(project_name)_mat.toml")
@@ -156,14 +155,6 @@ function main()
         log_print("   ✓ Loaded $(length(materials.gas_dictionary)) gases")
         log_print("   ✓ Loaded $(length(materials.soil_dictionary)) soils")
 
-        # Step 2.1: Normalize water BC/IC using SWRC models
-        swrc_in_materials = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
-        if swrc_in_materials
-            log_print("\nNormalizing water boundary and initial conditions")
-            normalize_water_conditions!(mesh, materials)
-            log_print("   ✓ Water BC/IC normalized to standard representations")
-        end
-
         # Step 3: Read calculation parameters
         log_print("\n[3/8] Reading calculation parameters file: $(calc_file)")
         calc_params = get_all_calc_params(calc_file)
@@ -171,7 +162,21 @@ function main()
         log_print("   ✓ Total simulation time: $(calc_params["time_stepping"]["total_simulation_time"]) $(calc_params["units"]["time_unit"])")
 
         # Step 3.1: Compute K_sat for soils with water flow (depends on gravity)
+        # CRITICAL: This must be called BEFORE normalize_water_conditions! (which needs SWRC model instances)
         compute_K_sat_runtime!(materials, calc_params)
+
+        # Step 2.1: Normalize water BC/IC using SWRC models
+        # NOTE: Must be called AFTER compute_K_sat_runtime! so SWRC instances are created
+        swrc_in_materials = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
+        if swrc_in_materials
+            log_print("\nNormalizing water boundary and initial conditions")
+            normalize_water_conditions!(mesh, materials)
+            log_print("   ✓ Water BC/IC normalized to standard representations")
+            # Debug: Show BC conversion results
+            if !isempty(mesh.pressure_head_bc)
+                log_print("   ✓ Converted BCs: $(length(mesh.pressure_head_bc)) pressure head nodes")
+            end
+        end
 
         # Step 3.2: Validate reaction kinetics requirements
         if calc_params["solver_settings"]["reaction_kinetics"] == 1
@@ -382,6 +387,14 @@ function main()
             close(log_file)
         end
     end
+end
+
+function print_banner()
+    println("\n" * "="^70)
+    println(" "^20 * "ADSIM - Adsorption Simulator")
+    println(" "^25 * "Version: $(get_version())")
+    println(" "^15 * "Advanced Modeling of Adsorption Processes")
+    println("="^70 * "\n")
 end
 
 # Execute main function when script is run directly

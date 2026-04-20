@@ -54,8 +54,7 @@ end
 """
 WaterSoilProperties
 
-Structure to store water-specific soil properties for Richards equation (vadose zone water flow).
-Includes soil-water retention characteristics (SWRC), hydraulic conductivity, and water state variables.
+Properties for water flow (Richards equation) in soil.
 
 # Fields
 - `residual_water_content::Float64`: Residual water content [-]

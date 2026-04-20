@@ -7,26 +7,14 @@
 """
 MeshData
 
-Structure to store all mesh data and associated boundary/initial conditions.
+Structure for all mesh data and associated boundary/initial conditions.
 
-# Fields
-- `num_nodes::Int`: Total number of nodes in the mesh
-- `num_elements::Int`: Total number of elements in the mesh
-- `coordinates::Matrix{Float64}`: Nodal coordinates (num_nodes × 2)
-- `elements::Matrix{Int}`: Element connectivity (num_elements × 4)
-- `concentration_bc::Dict{Int, Vector{Float64}}`: Concentration BC (node_id => [gas1, gas2, ...])
-- `uniform_flow_bc::Dict{Int, Vector{Float64}}`: Uniform flow BC (node_id => [gas1, gas2, ...])
-- `absolute_pressure_bc::Dict{Int, Float64}`: Absolute pressure BC (node_id => pressure)
-- `partial_pressure_bc::Dict{Int, Vector{Float64}}`: Partial pressure BC (node_id => [P_gas1, P_gas2, ...])
-- `liquid_discharge_bc::Dict{Int, Float64}`: Liquid discharge velocity BC (node_id => discharge_velocity [m/s])
-- `transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}`: Transient liquid discharge (node_id => [(time, velocity), ...])
-- `volumetric_content_bc::Dict{Int, Float64}`: Volumetric content BC (node_id => volumetric_content [-])
-- `pressure_head_bc::Dict{Int, Float64}`: Pressure head BC (node_id => pressure_head [m])
-- `initial_concentrations::Dict{Int, Vector{Float64}}`: Initial concentrations (elem_id => [gas1, gas2, ...])
-- `initial_temperature::Dict{Int, Float64}`: Initial temperature (elem_id => temperature)
-- `initial_volumetric_content::Dict{Int, Float64}`: Initial volumetric content (elem_id => volumetric_content [-])
-- `initial_pressure_head::Dict{Int, Float64}`: Initial pressure head (elem_id => pressure_head [m])
-- `materials::Dict{Int, Int}`: Material assignment (elem_id => material_index)
+# Key Fields
+- `num_nodes`, `num_elements`: Mesh dimensions
+- `coordinates`: Nodal coordinates (n_nodes × 2)
+- `elements`: Element connectivity (n_elements × 4)
+- BC dictionaries: concentration_bc, pressure_head_bc, etc.
+- IC dictionaries: initial_concentrations, initial_volumetric_content, etc.
 """
 
 mutable struct MeshData
@@ -72,13 +60,12 @@ end
 """
 BoundaryNodeInfluence
 
-Structure to store boundary node information with influence lengths.
+Store boundary node information with influence lengths.
 
 # Fields
-- `node_influences::Dict{Int, Float64}`: Dictionary mapping node_id => total_influence_length [m]
+- `node_influences::Dict{Int, Float64}`: node_id => influence_length [m]
 
-The influence length represents the portion of boundary edges contributing to each node.
-For edges where both nodes have pressure BC, each node receives half the edge length.
+Influence length is the portion of boundary edges contributing to each node.
 """
 struct BoundaryNodeInfluence
     node_influences::Dict{Int, Float64}
@@ -90,30 +77,20 @@ end
 
 
 """
-read_mesh_file(filename::String, materials = nothing) -> MeshData
+    read_mesh_file(filename, materials = nothing) -> MeshData
 
-Read an ADSIM .mesh file and return a MeshData structure containing all
-geometrical and physical data.
+Read an ADSIM .mesh file and return MeshData structure.
 
-Optionally normalizes water boundary conditions and initial conditions using SWRC models:
-- If materials provided: converts volumetric_content_bc (θ) → pressure_head_bc (h)
-  and initial_pressure_head (h) → initial_volumetric_content (θ)
-- If materials = nothing: reads mesh as-is without conversion (backward compatible)
+Optionally normalizes water BCs and ICs using SWRC models:
+- volumetric_content_bc (θ) → pressure_head_bc (h)
+- initial_pressure_head (h) → initial_volumetric_content (θ)
 
 # Arguments
-- `filename::String`: Path to the .mesh file
-- `materials::MaterialData = nothing`: Material properties with SWRC models (optional)
+- `filename`: Path to .mesh file
+- `materials`: Material data with SWRC (optional)
 
 # Returns
-- `MeshData`: Structure containing all mesh information with normalized water BC/IC
-
-# Example
-```julia
-mesh = read_mesh_file("problem.mesh", materials)
-println("Number of nodes: ", mesh.num_nodes)
-println("Pressure head BCs: ", length(mesh.pressure_head_bc))
-println("Volumetric content ICs: ", length(mesh.initial_volumetric_content))
-```
+- `MeshData`: Structure with all mesh information
 """
 function read_mesh_file(filename::String, materials = nothing)
     mesh = MeshData()
@@ -215,19 +192,19 @@ end
 #------------------------------------------------------------------------------
 
 """
-normalize_water_conditions!(mesh::MeshData, materials)
+    normalize_water_conditions!(mesh, materials)
 
-Convert water boundary conditions and initial conditions to standard representations:
-- Boundary conditions → always pressure_head (h) [m]
-- Initial conditions → always volumetric_content (θ) [-]
+Convert water BCs and ICs to standard representations.
 
-If mesh has volumetric_content_bc (θ), converts to h using SWRC inverse h_inv().
-If mesh has initial_pressure_head (h), converts to θ using SWRC closure theta().
-Deprecated fields are cleared after conversion.
+- BCs → pressure_head (h) [m]
+- ICs → volumetric_content (θ) [-]
+
+Converts volumetric_content_bc (θ) → pressure_head_bc (h) using SWRC inverse.
+Converts initial_pressure_head (h) → initial_volumetric_content (θ) using SWRC.
 
 # Arguments
-- `mesh::MeshData`: Mesh with parsed BC/IC (modified in place)
-- `materials::MaterialData`: Material data with SWRC models
+- `mesh`: Mesh with parsed BC/IC (modified in place)
+- `materials`: Material data with SWRC models
 """
 function normalize_water_conditions!(mesh::MeshData, materials)
     # Convert BC: volumetric_content_bc (θ) → pressure_head_bc (h)

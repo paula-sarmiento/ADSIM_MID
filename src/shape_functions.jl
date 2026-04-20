@@ -9,7 +9,7 @@ module ShapeFunctions
 
 using Base.Threads
 
-export ShapeFunctionData, initialize_shape_functions!, get_N, get_B, get_invJ, get_detJ, get_gauss_weights
+export ShapeFunctionData, initialize_shape_functions!, get_N, get_B, get_invJ, get_detJ, get_gauss_weights, RichardsCache, build_richards_cache
 
 """
     ShapeFunctionData
@@ -323,4 +323,109 @@ function get_gauss_weights()
     return shape_funcs.gauss_weights
 end
 
-end # module ShapeFunctions
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RichardsCache: precomputed data for implicit Richards solver
+# ══════════════════════════════════════════════════════════════════════════════
+
+"""
+    RichardsCache
+
+Precomputed element data for the implicit Richards solver.
+Built once from ADSIM's ShapeFunctions module after shape function initialization.
+
+# Fields
+- `Bp::Array{Float64, 4}`: Shape function derivatives [ne, 4 Gauss points, 2 coords, 4 nodes]
+  Convention: Bp[e, p, :, :] is [2×4] where row 1 = ∂N/∂x, row 2 = ∂N/∂y
+  This is the transpose of ADSIM's standard dN_dx [4×2] format
+- `detJ::Matrix{Float64}`: Determinant of Jacobian [ne, 4 Gauss points]
+- `Np::Vector{Vector{Float64}}`: Shape functions at each Gauss point [4][4 nodes]
+- `A_e::Vector{Float64}`: Element area [ne]
+- `weights::Vector{Float64}`: Gauss quadrature weights [4]
+
+**Purpose:** Avoid redundant computation of shape function derivatives across Picard iterations.
+This cache is built once in kernel.jl (after initialize_shape_functions!) and passed to
+the Richards solver, matching the pattern used by the explicit gas solver.
+
+**Pattern:** Similar to explicit solver's pattern: precompute once, reuse in time loop.
+"""
+struct RichardsCache
+    Bp      :: Array{Float64, 4}       # [ne, 4, 2, 4]
+    detJ    :: Matrix{Float64}         # [ne, 4]
+    Np      :: Vector{Vector{Float64}} # [4][4]
+    A_e     :: Vector{Float64}         # [ne]
+    weights :: Vector{Float64}         # [4]
+end
+
+"""
+    build_richards_cache(mesh) → RichardsCache
+
+Build precomputed cache from ADSIM's ShapeFunctions module.
+
+**Must be called AFTER `initialize_shape_functions!(mesh)` in kernel.jl.**
+
+This function extracts shape function data computed in initialize_shape_functions!()
+and reorganizes it into a format optimized for the implicit Richards solver:
+- Derivatives at each Gauss point pre-computed
+- Element areas pre-computed
+- Eliminates redundant computation during Picard iteration
+
+# Arguments
+- `mesh`: Mesh data structure with num_elements field
+
+# Returns
+- `RichardsCache`: Struct containing precomputed shape function data
+
+# Implementation Notes
+1. Retrieves shape functions using ShapeFunctions.get_*() accessors
+2. Computes ∂N/∂x and ∂N/∂y via chain rule: B_physical = B_iso * invJ
+3. Accumulates element areas via Gauss quadrature integration
+4. Organizes data for efficient element assembly during Picard iteration
+
+# See Also
+- `initialize_shape_functions!()` in shape_functions.jl (prerequisite)
+- `element_matrices_aniso!()` in implicit_richards_solver.jl (uses this cache)
+- `kernel.jl` (where this should be called in preprocessing phase)
+"""
+function build_richards_cache(mesh) :: RichardsCache
+    ne = mesh.num_elements
+    weights = ShapeFunctions.get_gauss_weights()
+    Np = [copy(ShapeFunctions.get_N(p)) for p in 1:4]
+
+    Bp_all   = zeros(Float64, ne, 4, 2, 4)
+    detJ_all = zeros(Float64, ne, 4)
+    A_e_all  = zeros(Float64, ne)
+
+    for e in 1:ne
+        area = 0.0
+        for p in 1:4
+            # ── Compute physical shape function derivatives ──────────────
+            # B_iso = ∂N/∂(ξ,η) in isoparametric space [4×2]
+            B_iso = ShapeFunctions.get_B(p)
+            
+            # invJ = [∂(ξ,η)/∂(x,y)] computed in shape_functions.jl [2×2]
+            invJ  = ShapeFunctions.get_invJ(e, p)
+            
+            # dJ = det(J) at Gauss point p in element e
+            dJ    = ShapeFunctions.get_detJ(e, p)
+
+            # ── Chain rule: ∂N/∂(x,y) = ∂N/∂(ξ,η) * ∂(ξ,η)/∂(x,y) ──
+            # Result: dN_dx[a, :] = [∂N_a/∂x, ∂N_a/∂y] for node a=1..4
+            dN_dx = B_iso * invJ   # [4×2]
+            
+            # ── Store in optimized format for assembly ────────────────
+            for a in 1:4
+                Bp_all[e, p, 1, a] = dN_dx[a, 1]   # ∂Na/∂x
+                Bp_all[e, p, 2, a] = dN_dx[a, 2]   # ∂Na/∂y
+            end
+
+            detJ_all[e, p] = dJ
+            area += dJ * weights[p]  # Accumulate element area
+        end
+        A_e_all[e] = area
+    end
+
+    return RichardsCache(Bp_all, detJ_all, Np, A_e_all, weights)
+end
+
+end  # module ShapeFunctions
