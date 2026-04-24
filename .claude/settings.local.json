@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(julia --version)",
+      "Bash(julia src/kernel.jl Test04102026)",
+      "Bash(julia src/kernel.jl CeliaCol)",
+      "Bash(taskkill /F /IM julia.exe)",
+      "Bash(julia run_colab_test.jl)",
+      "Bash(julia plot_colab_test.jl)",
+      "Bash(julia run_celia_test.jl)",
+      "Bash(julia -e ' *)",
+      "Bash(julia plot_celia_fixed.jl)",
+      "Bash(rm -f output/CeliaCol_stage*.jld2)",
+      "Bash(julia debug_step1.jl)",
+      "Bash(julia run_celia_3dt.jl)",
+      "Bash(julia plot_celia_3dt.jl)"
+    ]
+  }
+}

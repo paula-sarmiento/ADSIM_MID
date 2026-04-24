@@ -1,0 +1,36 @@
+# ADSIM calculation parameters
+# Celia et al. (1990) benchmark: 1D infiltration, 24 hours
+
+[units]
+geometry_unit = "m"
+mass_unit = "gr"
+pressure_unit = "kPa"
+temperature_unit = "K"
+time_unit = "s"
+
+[gravity]
+gravity_magnitude = 9.81
+gravity_x_component = 0.0
+gravity_y_component = -1.0
+
+[solver]
+solver_type = "2D-Plane"
+water_flow = 1
+diffusion = 0
+advection = 0
+gravity = 0
+reaction_kinetics = 0
+
+[time_stepping]
+total_simulation_time = 86400
+time_per_step = 360
+courant_number = 0.4
+
+[data_saving]
+data_saving_interval = 3600
+
+[probing]
+number_of_nodes = 0
+nodes_to_probe = []
+number_of_elements = 0
+elements_to_probe = []
