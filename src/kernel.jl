@@ -162,7 +162,6 @@ function main()
         log_print("   ✓ Total simulation time: $(calc_params["time_stepping"]["total_simulation_time"]) $(calc_params["units"]["time_unit"])")
 
         # Step 3.1: Compute K_sat for soils with water flow (depends on gravity)
-        # CRITICAL: This must be called BEFORE normalize_water_conditions! (which needs SWRC model instances)
         compute_K_sat_runtime!(materials, calc_params)
 
         # Step 2.1: Normalize water BC/IC using SWRC models

@@ -193,15 +193,16 @@ Applies Dirichlet and Neumann boundary conditions.
 - BCs applied once per assembly (not in Picard loop)
 """
 function assemble_richards!(
-    A      :: SparseMatrixCSC{Float64, Int},
-    R      :: Vector{Float64},
-    h_curr :: Vector{Float64},
-    h_prev :: Vector{Float64},
+    A         :: SparseMatrixCSC{Float64, Int},
+    R         :: Vector{Float64},
+    h_curr    :: Vector{Float64},
+    h_prev    :: Vector{Float64},
     mesh,
     elem_props :: Vector{ElementWaterProps},
-    Δt     :: Float64,
-    e_g    :: Vector{Float64},
-    cache  :: RichardsCache
+    Δt        :: Float64,
+    e_g       :: Vector{Float64},
+    cache     :: RichardsCache,
+    bot_edges :: Vector{Tuple{Int,Int,Int}}
 )
     fill!(A.nzval, 0.0)
     fill!(R, 0.0)
@@ -235,21 +236,20 @@ function assemble_richards!(
 
     # ─────────────────────────────────────────────────────────────────
     # Apply P_boundary_water masking: zero matrix rows and residual at BC nodes
-    # This prevents flux contributions from affecting solution at prescribed nodes
-    # (since δ_i = 0 when both A row and R[i] are zeroed, and h_i stays at prescribed value)
+    # Single CSC pass — correct even when structurally stored entries are zero.
     # ─────────────────────────────────────────────────────────────────
     global P_boundary_water
-    for i in 1:mesh.num_nodes
-        if P_boundary_water[i, 1] == 0  # BC node
-            # Zero the matrix row i (replace with identity: A[i,i] = 1, A[i,j≠i] = 0)
-            # This must be done before zeroing the residual to maintain linear system structure
-            rows, cols, vals = findnz(A)
-            for k in eachindex(rows)
-                if rows[k] == i
-                    A.nzval[k] = rows[k] == cols[k] ? 1.0 : 0.0
-                end
+    n = mesh.num_nodes
+    for j in 1:n
+        for k in A.colptr[j]:(A.colptr[j+1] - 1)
+            i = A.rowval[k]
+            if P_boundary_water[i, 1] == 0   # BC node: enforce identity row
+                A.nzval[k] = (i == j) ? 1.0 : 0.0
             end
-            # Zero the residual at BC nodes
+        end
+    end
+    for i in 1:n
+        if P_boundary_water[i, 1] == 0
             R[i] = 0.0
         end
     end
@@ -258,17 +258,29 @@ function assemble_richards!(
     # Phase 2: Apply Neumann boundary flux contributions
     # Add prescribed flux to residual at non-Dirichlet nodes
     # ─────────────────────────────────────────────────────────────────
-    global q_boundary_water
+    global q_flux_water
     for i in 1:mesh.num_nodes
-        # Only add flux at nodes WITHOUT Dirichlet BCs
-        if P_boundary_water[i, 1] != 0  # Free node (not Dirichlet)
-            if q_boundary_water[i] != 0.0  # Has prescribed flux
-                R[i] += q_boundary_water[i]
-                # Sign convention:
-                #   q > 0 = inflow (increases h)
-                #   q < 0 = outflow (decreases h)
-            end
+        if P_boundary_water[i, 1] != 0 && q_flux_water[i] != 0.0
+            R[i] += q_flux_water[i]
         end
+    end
+
+    # ─────────────────────────────────────────────────────────────────
+    # Phase 3: Free-drainage gravity flux at bottom edges
+    # Arithmetic mean of K at the two edge nodes (Colab approach).
+    # q_bot = K_avg * e_g[2]  (negative for downward gravity → outflow)
+    # Contribution: R[ni] += q_bot * l_e/2,  R[nj] += q_bot * l_e/2
+    # ─────────────────────────────────────────────────────────────────
+    for (ni, nj, e_idx) in bot_edges
+        model_e = elem_props[e_idx].model
+        K_ni  = K_h_y(model_e, h_curr[ni])
+        K_nj  = K_h_y(model_e, h_curr[nj])
+        q_bot = (K_ni + K_nj) / 2.0 * e_g[2]
+        xi = mesh.coordinates[ni, 1];  yi = mesh.coordinates[ni, 2]
+        xj = mesh.coordinates[nj, 1];  yj = mesh.coordinates[nj, 2]
+        l_e = sqrt((xj - xi)^2 + (yj - yi)^2)
+        R[ni] += q_bot * l_e / 2.0
+        R[nj] += q_bot * l_e / 2.0
     end
 
     return nothing
@@ -330,7 +342,8 @@ function picard_richards!(
     Δt         :: Float64,
     e_g        :: Vector{Float64},
     A          :: SparseMatrixCSC{Float64, Int},
-    cache      :: RichardsCache;
+    cache      :: RichardsCache,
+    bot_edges  :: Vector{Tuple{Int,Int,Int}};
     tol        :: Float64 = 1e-8,
     max_iter   :: Int     = 100,
     ω          :: Float64 = 1.0
@@ -338,23 +351,24 @@ function picard_richards!(
     N = mesh.num_nodes
     R = zeros(Float64, N)
 
+    # ── Cold start: reset to previous time step (Colab pattern) ────────
     h_curr .= h_prev
 
     for m in 1:max_iter
         # Step 1: Assemble nonlinear system (A and R depend on current h)
-        assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache)
+        assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache, bot_edges)
 
         # Step 2: Solve for pressure head increments
         delta = A \ R
         delta_norm = maximum(abs.(delta))
 
-        # Step 3: Check convergence
+        # Step 3: Update pressure head
+        h_curr .+= ω .* delta
+
+        # Step 4: Check convergence
         if delta_norm < tol
             return m
         end
-
-        # Step 4: Update pressure head
-        h_curr .+= ω .* delta
     end
 
     # Non-convergence: Backward Euler is unconditionally stable so solution is accepted
@@ -437,7 +451,6 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
 
     # ── Extract parameters ────────────────────────────────────────────
     dt = time_data.actual_dt
-    n_steps = time_data.num_steps
     load_step_time = calc_params["data_saving_interval"]
 
     gx = calc_params["gravity"]["x_component"]
@@ -447,8 +460,10 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     rho_w = materials.liquid.density
     g_mag = calc_params["gravity"]["magnitude"]
 
-    log_print(@sprintf("   Δt = %.4e %s, n_steps = %d",
-                        dt, calc_params["units"]["time_unit"], n_steps))
+    log_print(@sprintf("   Δt = %.4e %s, total_time = %.4e %s",
+                        dt, calc_params["units"]["time_unit"],
+                        calc_params["time_stepping"]["total_simulation_time"],
+                        calc_params["units"]["time_unit"]))
     log_print(@sprintf("   Gravity = [%.2f, %.2f], |g| = %.2f", gx, gy, g_mag))
 
     # ── Build sparsity pattern ────────────────────────────────────────
@@ -463,13 +478,35 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     log_print("   ✓ Dirichlet BC nodes marked: $n_bc_nodes nodes")
 
     # ── Initialize water flow boundary conditions ─────────────────────
-    zero_flow_vectors_water!(mesh.num_nodes)
-    boundary_influences = get_boundary_node_influences(mesh)
-    apply_boundary_flows_water!(mesh, q_boundary_water, boundary_influences.node_influences)
-    n_neumann_nodes = count(q_boundary_water .!= 0.0)
+    apply_water_flux_bc!(mesh)
+    n_neumann_nodes = count(q_flux_water .!= 0.0)
     log_print("   ✓ Neumann BC nodes initialized: $n_neumann_nodes nodes")
 
-    log_print(@sprintf("   ✓ Initial h: min=%.4f, max=%.4f", minimum(h), maximum(h)))
+    # ── Precompute free-drainage bottom edges (Colab pattern) ─────────
+    # Edges at y_min where both nodes are free (not Dirichlet).
+    # K·e_g[2] gravity flux is applied here each Picard iteration.
+    y_min = minimum(mesh.coordinates[:, 2])
+    tol_y = 1e-10
+    bot_edges = Tuple{Int,Int,Int}[]
+    seen_edges = Set{Tuple{Int,Int}}()
+    for e in 1:mesh.num_elements
+        for (a, b) in ((1,2), (2,3), (3,4), (4,1))
+            ni = mesh.elements[e, a]
+            nj = mesh.elements[e, b]
+            if mesh.coordinates[ni, 2] < y_min + tol_y &&
+               mesh.coordinates[nj, 2] < y_min + tol_y &&
+               P_boundary_water[ni, 1] != 0 &&
+               P_boundary_water[nj, 1] != 0
+                key = (min(ni,nj), max(ni,nj))
+                if key ∉ seen_edges
+                    push!(seen_edges, key)
+                    push!(bot_edges, (ni, nj, e))
+                end
+            end
+        end
+    end
+    log_print("   ✓ Free-drainage bottom edges: $(length(bot_edges))")
+
 
     # ── Time tracking ─────────────────────────────────────────────────
     if initial_state !== nothing
@@ -488,50 +525,44 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
         write_vtk_file_water(filename, 0, 0.0, mesh, h, theta_w, S_r, P_water, v_water)
         
         current_time     = 0.0
-        next_output_time = load_step_time
+        next_output_time = Float64(load_step_time)
         output_counter   = 1
     end
 
     # ── Time loop ─────────────────────────────────────────────────────
     h_new = copy(h)
-    save_data = false
+    total_time = calc_params["time_stepping"]["total_simulation_time"]
+    step_count = 0
 
-    for step in 1:n_steps
-        # ──────────────────────────────────────────────────────────────────────────
-        # PICARD ITERATION: Solve Richards equation for this time step
-        # ──────────────────────────────────────────────────────────────────────────
-        # Input:  h_new = h_prev (initial guess for Picard iteration)
-        #         h     = h_curr from previous time step
-        # Output: h_new = converged pressure head solution at time t+Δt
-        #         n_iter = number of Picard iterations performed
-        n_iter = picard_richards!(h_new, h, mesh, elem_props, dt, e_g,
-                                   A, cache;
-                                   tol=1e-8, max_iter=100, ω=1.0)
+    while current_time < total_time - 1e-10
+        step_count += 1
 
-        # ──────────────────────────────────────────────────────────────────────────
-        # Accept time step and update persistent state
-        # ──────────────────────────────────────────────────────────────────────────
-        h .= h_new           # Copy converged solution into persistent h variable
-        current_time += dt   # Advance time counter
+        # ── Clamp dt to hit the next output time or total_time ────────
+        dt_step = min(dt, next_output_time - current_time, total_time - current_time)
+        # Note: at_output checked AFTER the step based on time reached,
+        # not whether dt was shortened (which misses exact-hit cases).
 
-        # ──────────────────────────────────────────────────────────────────────────
-        # Update global water variables from converged h
-        # ──────────────────────────────────────────────────────────────────────────
-        # enforce_water_dirichlet_bc!() does two things:
-        #   1. Mark Dirichlet nodes in P_boundary_water mask (P_boundary_water[i,1]=0)
-        #   2. Recompute water state (θ_w, S_r, P_water) from h via SWRC model
-        #      This ensures all output variables match the converged h solution
+        # ── Picard iteration ──────────────────────────────────────────
+        n_iter = picard_richards!(h_new, h, mesh, elem_props, dt_step, e_g,
+                                   A, cache, bot_edges;
+                                   tol=1e-4, max_iter=100, ω=1.0)
+
+        # ── Accept step ───────────────────────────────────────────────
+        h .= h_new
+        current_time += dt_step
         enforce_water_dirichlet_bc!(mesh, materials)
 
-        if save_data || step == n_steps
-            progress = 100.0 * step / n_steps
+        # ── Output at scheduled times and at final time ───────────────
+        at_output = current_time >= next_output_time - 1e-10
+        at_end    = current_time >= total_time - 1e-10
+        if at_output || at_end
+            progress = 100.0 * current_time / total_time
             log_print(@sprintf("      Load Step %d (%.1f%%), Time = %.4e %s, Picard = %d",
                                 output_counter, progress, current_time,
                                 calc_params["units"]["time_unit"], n_iter))
 
             update_water_globals!(elem_props, mesh, e_g, cache, rho_w, g_mag)
-            
-            # ── Write VTK output ─────────────────────────────────────────
+
             output_dir = "output"
             filename = joinpath(output_dir, project_name * "_water")
             write_vtk_file_water(filename, output_counter, current_time,
@@ -539,15 +570,6 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
 
             next_output_time += load_step_time
             output_counter += 1
-            save_data = false
-        end
-
-        if current_time + dt > next_output_time
-            dt = next_output_time - current_time
-            save_data = true
-        else
-            dt = time_data.actual_dt
-            save_data = false
         end
     end
 
