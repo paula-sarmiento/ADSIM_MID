@@ -22,15 +22,17 @@ using .ADSIMVersion: get_version
 include("read_mesh.jl")
 include("read_materials.jl")
 include("read_calc_params.jl")
+include("swrc_models.jl")
 include("initialize_variables.jl")
 include("initialize_flows.jl")
 include("time_step.jl")
+include("time_step_water.jl")
 include("shape_functions.jl")
 include("write_vtk.jl")
 include("fully_explicit_solver.jl")
+include("fully_explicit_solver_water.jl")
 include("write_checkpoint.jl")
 include("read_checkpoint.jl")
-include("implicit_richards_solver.jl")
 
 using .ShapeFunctions
 using .WriteVTK
@@ -67,8 +69,9 @@ function main()
     project_name = ARGS[1]
 
     # Construct file paths from project name
-    # Data files are in src/data/ directory
-    data_dir = "src/data"
+    # Assuming data files are in the data/ directory relative to src/
+    #data_dir = "src\\data"
+    data_dir = "data"
     mesh_file = joinpath(data_dir, "$(project_name).mesh")
     calc_file = joinpath(data_dir, "$(project_name)_calc.toml")
     mat_file = joinpath(data_dir, "$(project_name)_mat.toml")
@@ -164,45 +167,22 @@ function main()
         # Step 3.1: Compute K_sat for soils with water flow (depends on gravity)
         compute_K_sat_runtime!(materials, calc_params)
 
-        # Step 2.1: Normalize water BC/IC using SWRC models
-        # NOTE: Must be called AFTER compute_K_sat_runtime! so SWRC instances are created
-        swrc_in_materials = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
-        if swrc_in_materials
-            log_print("\nNormalizing water boundary and initial conditions")
-            normalize_water_conditions!(mesh, materials)
-            log_print("   ✓ Water BC/IC normalized to standard representations")
-            # Debug: Show BC conversion results
-            if !isempty(mesh.pressure_head_bc)
-                log_print("   ✓ Converted BCs: $(length(mesh.pressure_head_bc)) pressure head nodes")
-            end
-        end
-
-        # Step 3.2: Validate reaction kinetics requirements
+        # Step 3.5: Validate reaction kinetics requirements
         if calc_params["solver_settings"]["reaction_kinetics"] == 1
             log_print("\nValidating reaction kinetics requirements")
             validate_reaction_kinetics_requirements(calc_params["solver_settings"], materials)
             log_print("   ✓ CO2 gas is defined in materials")
         end
 
-        # Step 3.3: Validate SWRC parameters if any soil uses SWRC
-        swrc_used = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
+        # Step 3.6: Validate SWRC parameters if any soil uses SWRC
+        swrc_used = any(soil.swrc_model != "None" for (name, soil) in materials.soils)
         if swrc_used
             log_print("\nValidating SWRC parameters")
             validate_swrc_parameters(materials)
             log_print("   ✓ SWRC model parameters validated")
         end
 
-        # Step 3.4: Precompute element water properties (for Richards solver)
-        # This must be done after K_sat computation and SWRC validation
-        elem_props_cache = nothing
-        water_flow_enabled = get(calc_params["solver_settings"], "water_flow", 0) == 1
-        if water_flow_enabled
-            log_print("\nPrecomputing element water properties...")
-            elem_props_cache = precompute_element_water_props(mesh, materials)
-            log_print("   ✓ Element SWRC models cached ($(length(elem_props_cache)) elements)")
-        end
-
-        # Step 3.5: Check for existing checkpoint from previous stage
+        # Step 3.7: Check for existing checkpoint from previous stage
         checkpoint_file, prev_stage = find_latest_checkpoint(project_name, output_dir)
         checkpoint_loaded = false
         initial_state = nothing
@@ -245,15 +225,14 @@ function main()
             log_print("   ✓ Tracking $(NGases) gas species in $(NSoils) soil types")
         end
 
-        # Step 5: Apply initial conditions and initialize flows [LZC: Here is where you should initialize the flow arrays]
+        # Step 5: Apply initial conditions and initialize flows
         if !checkpoint_loaded
             log_print("\n[5/8] Applying initial conditions and initializing flows")
             apply_all_initial_conditions!(mesh, materials)
-            initialize_all_flows!(mesh, materials, Nnodes, NGases)  #[LZC] Here is where you initialize the p_boundary vectors. 
+            initialize_all_flows!(mesh, materials, Nnodes, NGases)
             log_print("   ✓ Initial and boundary conditions applied")
         else
-            log_print("\n[5/8] Applying boundary conditions from mesh file")#[LZC] Here is when you stop a calculation and restart (useful for multi-stage models. Leave this for last, but it is important for completeness
-
+            log_print("\n[5/8] Applying boundary conditions from mesh file")
             # Apply boundary conditions from mesh file (may have changed between stages)
             # This sets P_boundary, applies concentration and pressure BCs
             apply_concentration_bc!(mesh)
@@ -292,14 +271,6 @@ function main()
         log_print("\n[6/8] Initializing shape functions")
         initialize_shape_functions!(mesh)
         log_print("   ✓ Shape functions and Jacobians precomputed")
-
-        # Step 6.5: Build Richards cache (if water flow is enabled)
-        richards_cache = nothing
-        if water_flow_enabled
-            log_print("\n[6.5/8] Building Richards solver cache")
-            richards_cache = build_richards_cache(mesh)
-            log_print("   ✓ Cache built for $(mesh.num_elements) elements")
-        end
         
         log_print("\n[7/8] Calculating time step information")
         time_data, limiting_scale = calculate_time_step_info(mesh, materials, calc_params)
@@ -310,24 +281,22 @@ function main()
         log_print(@sprintf("   ✓ Actual time step: %.4g %s", time_data.actual_dt, calc_params["units"]["time_unit"]))
         log_print("   ✓ Number of time steps: $(time_data.num_steps)")
 
-        # Step 8: Run solver
-        # ═══════════════════════════════════════════════════════════════
-        # Select solver based on water_flow flag in [solver] section
-        # water_flow == 1 → Richards equation (implicit)
-        # water_flow == 0 → gas diffusion (explicit, default)
-        # ═══════════════════════════════════════════════════════════════
-        water_flow_enabled = get(calc_params["solver_settings"], "water_flow", 0) == 1 #[LZC] I don't get why to use a variable for this when you can just use the calc_param directly.
- 
-        if water_flow_enabled #Richard's solver #[LZC] Please do a better job commenting the code. 
+        # Step 8: Run fully explicit solver
+        # ═══════════════════════════════════════════════════════════════════════════════════
+        # Determine which solver to use based on solver type in calc_params
+        # ═══════════════════════════════════════════════════════════════════════════════════
+        solver_type = get(calc_params["solver_settings"], "solver_type", "gas")
+        
+        if solver_type == "water"
             log_print("\n[8/8] Running water flow solver (Richards equation)")
-            final_state = implicit_richards_solver(mesh, materials, calc_params, time_data, 
-                                                   project_name, log_print, 
-                                                   richards_cache, elem_props_cache, initial_state)
-        else #Multi gas advection diffusion explicit solver
+            final_state = fully_explicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
+        elseif solver_type == "gas"
             log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
             final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
+        else
+            error("Unknown solver type: '$solver_type'. Must be 'gas' or 'water'.")
         end
- 
+
         # Write checkpoint file for multi-stage calculations
         log_print("\nWriting checkpoint file for stage $(current_stage)...")
         checkpoint_file = write_checkpoint(project_name, current_stage, 
@@ -336,16 +305,16 @@ function main()
                                           final_state.next_output_time)
         checkpoint_size = get_checkpoint_file_size(checkpoint_file)
         log_print("   ✓ Checkpoint saved: $(basename(checkpoint_file)) ($(checkpoint_size))")
- 
+
         # Print total run time
         end_time = now()
         total_time = (end_time - start_time).value / 1000.0  # Convert milliseconds to seconds
         log_print("\nTotal run time: $(total_time) seconds")
- 
+
         log_print("\n" * "="^64)
         log_print("Calculation completed successfully")
         log_print("="^64)
- 
+
     catch e
         # Log the error with full details
         log_print("\n" * "="^64)
