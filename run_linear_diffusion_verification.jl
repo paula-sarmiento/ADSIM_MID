@@ -111,9 +111,9 @@ function main()
         calc_params = get_all_calc_params(calc_file)
         log_print("   ✓ Total simulation time: $(calc_params["time_stepping"]["total_simulation_time"]) s")
         
-        # Step 3.1: Compute K_sat (kernel pattern, skip for ConstantSoil)
-        # compute_K_sat_runtime!(materials, calc_params)
-        log_print("   ✓ (K_sat computation skipped for ConstantSoil verification)")
+        # Step 3.1: Compute K_sat (using kernel pattern - enables any SWRC model)
+        compute_K_sat_runtime!(materials, calc_params)
+        log_print("   ✓ K_sat computed for all soils from intrinsic permeability")
 
         # ── [4/8] Initialize simulation variables ─────────────────
         log_print("\n[4/8] Initializing simulation variables")
@@ -123,25 +123,26 @@ function main()
         # ── [5/8] Apply initial conditions and initialize flows ────
         log_print("\n[5/8] Applying initial conditions and initializing flows")
         
-        # For ConstantSoil verification: extract parameters and create model
-        soil_props = get_soil_properties(materials, materials.soil_dictionary[1])
+        # Get soil and extract parameters for verification reporting (kernel pattern)
+        soil_name = materials.soil_dictionary[1]
+        soil = materials.soils[soil_name]
+        model = get_water_model(soil.water)
+        
+        if model === nothing
+            error("No SWRC model found for soil '$soil_name'. Ensure swrc_model != 'None' in materials file.")
+        end
+        
+        # Extract parameters via polymorphic dispatch (works for all SWRC models)
         liquid_props = get_liquid_properties(materials)
-        
-        theta_s = soil_props.porosity
-        theta_r = soil_props.water.theta_r
-        h_min   = -soil_props.water.swrc_vg_alpha  # Repurposed for ConstantSoil
-        k_int   = soil_props.intrinsic_permeability
-        rho_w   = liquid_props.density
-        mu_w    = liquid_props.dynamic_viscosity
-        
         g_mag = calc_params["gravity"]["magnitude"]
-        K_val = k_int * rho_w * g_mag / mu_w
-        C_val = (theta_s - theta_r) / abs(h_min)
+        
+        # Polymorphic: K_h at saturation (h=0.0) gives K_sat equivalent for all models
+        K_val = K_h(model, 0.0)
+        C_val = C_moist(model, 0.0)
         D_val = K_val / C_val
         
-        model = ConstantSoil(theta_r=theta_r, theta_s=theta_s, h_min=h_min, K_val=K_val)
-        
-        # Apply initial and boundary conditions manually for ConstantSoil
+        # Apply verification-specific uniform initial condition (h = -0.5 m everywhere)
+        # Then apply boundary conditions using kernel pattern
         for node_id in 1:mesh.num_nodes
             if !haskey(mesh.pressure_head_bc, node_id)
                 h[node_id] = -0.5
@@ -152,10 +153,11 @@ function main()
             end
         end
         
-        # Initialize flow vectors
-        zero_flow_vectors_water!(mesh.num_nodes)
+        # Initialize flows using kernel pattern (handles boundary edges, pressure BC flows)
+        initialize_all_flows!(mesh, materials, mesh.num_nodes, 0)
         log_print("   ✓ Initial conditions applied (h = -0.5 m, BC from mesh)")
         log_print("   ✓ Flow vectors initialized")
+        log_print("   ✓ SWRC Model: $(typeof(model).name)")
 
         # ── [6/8] Initialize shape functions ──────────────────────
         log_print("\n[6/8] Initializing shape functions")
@@ -246,14 +248,13 @@ function main()
         # ── Post-processing: L2 errors + plots ────────────────────────
         log_print("\nPost-processing: L2 error vs. analytical solution")
 
-        Lx    = maximum(mesh.coordinates[:,1])
-        x_mid = Lx / 2.0
-        tol_x = Lx / (2 * 5)
-        col_nodes = sort(findall(i -> abs(mesh.coordinates[i,1] - x_mid) < tol_x, 1:N),
+        # Extract LEFT column only (x = 0) — effective 1D verification
+        tol_x = 1.0e-6
+        col_nodes = sort(findall(i -> mesh.coordinates[i,1] < tol_x, 1:N),
                          by = i -> mesh.coordinates[i,2])
         y_col = mesh.coordinates[col_nodes, 2]
 
-        log_print(@sprintf("   ✓ Extraction column: x ≈ %.2f m  (%d nodes)", x_mid, length(col_nodes)))
+        log_print(@sprintf("   ✓ Extraction column: x = 0.0 m  (%d nodes)", length(col_nodes)))
         log_print("-"^64)
 
         L2_errors = Float64[]

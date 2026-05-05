@@ -86,6 +86,8 @@ mutable struct WaterSoilProperties
     swrc_vg_alpha::Float64
     swrc_vg_n::Float64
     swrc_cav_delta::Float64
+    h_min::Float64
+    K_val::Float64
     theta_s::Float64
     theta_r::Float64
     K_sat::Float64
@@ -101,7 +103,7 @@ mutable struct WaterSoilProperties
     function WaterSoilProperties()
         # Dummy closures (will be replaced if hydraulic properties are provided)
         dummy_func = (x) -> 0.0
-        new(0.0, "None", 0.0, 0.0, 0.0, 0.0, 0.0,
+        new(0.0, "None", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0,
             dummy_func, dummy_func, dummy_func, dummy_func, dummy_func, nothing)
     end
@@ -331,6 +333,10 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.water.swrc_vg_alpha = Float64(get(soil_info, "swrc_vg_alpha", 0.0))
         soil_props.water.swrc_vg_n = Float64(get(soil_info, "swrc_vg_n", 0.0))
         soil_props.water.swrc_cav_delta = Float64(get(soil_info, "swrc_cav_delta", 0.0))
+        
+        # ConstantSoil-specific parameters
+        soil_props.water.h_min = Float64(get(soil_info, "h_min", 0.0))
+        soil_props.water.K_val = Float64(get(soil_info, "K_val", 0.0))
         
         # Store residual_water_content in water struct
         soil_props.water.residual_water_content = Float64(get(soil_info, "residual_water_content", 0.0))
@@ -586,6 +592,10 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                     swrc_params["n_param"] = soil.water.swrc_vg_n
                 elseif soil.water.swrc_model == "Cavalcante"
                     swrc_params["delta"] = soil.water.swrc_cav_delta
+                elseif soil.water.swrc_model == "ConstantSoil"
+                    # ConstantSoil uses K_val directly instead of K_sat
+                    swrc_params["K_val"] = soil.water.K_val
+                    swrc_params["h_min"] = soil.water.h_min
                 end
                 
                 # Create SWRC model struct instance with updated K_sat (option: add directional K_s_x, K_s_y)
