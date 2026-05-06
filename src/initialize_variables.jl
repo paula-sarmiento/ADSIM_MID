@@ -843,6 +843,41 @@ function apply_all_initial_conditions!(mesh, materials)
 end
 
 
+"""
+    apply_initial_conditions_water!(mesh, materials)
+
+Apply water-only initial conditions (both IC and BC).
+Preferred for water-only simulations (e.g., Richards solver verification tests).
+
+This function applies water initial conditions and boundary conditions
+without triggering multi-physics initializations (gas, temperature, lime, etc.).
+
+# Arguments
+- `mesh`: Mesh structure containing water IC/BC data
+- `materials`: Material properties containing SWRC models
+
+# Behavior
+Applies in priority order:
+1. Initial conditions (volumetric_content > pressure_head)
+2. Boundary conditions (volumetric_content_bc > pressure_head_bc > flux_bc)
+
+# Usage
+For water-only tests:
+```julia
+apply_initial_conditions_water!(mesh, materials)
+initialize_all_flows!(mesh, materials, mesh.num_nodes, 0)  # 0 gases
+```
+"""
+function apply_initial_conditions_water!(mesh, materials)
+    # Apply water initial conditions (priority: volumetric_content > pressure_head)
+    apply_initial_water_volumetric_content!(mesh, materials)
+    apply_initial_water_pressure_head!(mesh, materials)
+    
+    # Apply water boundary conditions (priority: volumetric_content_bc > pressure_head_bc > flux_bc)
+    apply_water_boundary_conditions!(mesh, materials)
+end
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Implicit Richards solver helpers
 # These functions support the implicit Richards solver but operate on

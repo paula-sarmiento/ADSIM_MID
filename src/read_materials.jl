@@ -507,6 +507,10 @@ function validate_swrc_parameters(materials::MaterialData)
                     """)
                 end
             
+            # Verification / test models: no extra parameter checks beyond existence
+            elseif soil.water.swrc_model == "ConstantSoil" || soil.water.swrc_model == "LinearSoil"
+                continue
+            
             else
                 error("""
                 SWRC Validation Error: '$soil_name' has unknown SWRC model: '$(soil.water.swrc_model)'
@@ -515,6 +519,8 @@ function validate_swrc_parameters(materials::MaterialData)
                 - "None"
                 - "Van_Genuchten"
                 - "Cavalcante"
+                - "ConstantSoil"
+                - "LinearSoil"
                 """)
             end
         end
@@ -593,7 +599,7 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                 elseif soil.water.swrc_model == "Cavalcante"
                     swrc_params["delta"] = soil.water.swrc_cav_delta
                 elseif soil.water.swrc_model == "ConstantSoil"
-                    # ConstantSoil uses K_val directly instead of K_sat
+                    # ConstantSoil uses K_val directly instead of K_sat FOR VERIFICATION PURPOSES ONLY - this allows testing of the Richards solver with a simple constant K model without needing to specify intrinsic permeability and rely on the K_sat computation
                     swrc_params["K_val"] = soil.water.K_val
                     swrc_params["h_min"] = soil.water.h_min
                 end

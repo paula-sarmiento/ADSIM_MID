@@ -451,7 +451,7 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
 
     # ── Extract parameters ────────────────────────────────────────────
     dt = time_data.actual_dt
-    load_step_time = calc_params["data_saving_interval"]
+    load_step_time = time_data.time_per_step
 
     gx = calc_params["gravity"]["x_component"]
     gy = calc_params["gravity"]["y_component"]
