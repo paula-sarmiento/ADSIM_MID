@@ -100,7 +100,30 @@ function get_time_stepping(calc_data::Dict)
     return Dict(
         "total_simulation_time" => time_data["total_simulation_time"],
         "time_per_step" => time_data["time_per_step"],
-        "courant_number" => time_data["courant_number"]
+        "courant_number" => time_data["courant_number"],
+        "fixed_dt" => get(time_data, "fixed_dt", nothing),
+        "fixed_dt_sweep" => get(time_data, "fixed_dt_sweep", Any[]),
+        "implicit_water_dt_factor" => get(time_data, "implicit_water_dt_factor", 50.0)
+    )
+end
+
+"""
+    get_nonlinear_solver(calc_data::Dict)
+
+Extract nonlinear solver controls from calculation data.
+
+# Arguments
+- `calc_data::Dict`: Dictionary containing calculation parameters
+
+# Returns
+- Dictionary with Picard iteration controls
+"""
+function get_nonlinear_solver(calc_data::Dict)
+    nonlinear = get(calc_data, "nonlinear_solver", Dict{String, Any}())
+    return Dict(
+        "picard_tolerance" => Float64(get(nonlinear, "picard_tolerance", 1.0e-8)),
+        "picard_max_iter" => Int(get(nonlinear, "picard_max_iter", 100)),
+        "picard_relaxation" => Float64(get(nonlinear, "picard_relaxation", 1.0))
     )
 end
 
@@ -247,6 +270,7 @@ function get_all_calc_params(filename::String)
         "gravity" => get_gravity(calc_data),
         "solver_settings" => get_solver_settings(calc_data),
         "time_stepping" => get_time_stepping(calc_data),
+        "nonlinear_solver" => get_nonlinear_solver(calc_data),
         "data_saving_interval" => get_data_saving_interval(calc_data),
         "probing_nodes" => get_probing_nodes(calc_data),
         "probing_elements" => get_probing_elements(calc_data)

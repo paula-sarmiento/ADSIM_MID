@@ -22,7 +22,7 @@
 
 using LinearAlgebra, SparseArrays, Printf, Plots, Statistics, TOML, Dates
 
-const PROJECT_ROOT = @__DIR__
+const PROJECT_ROOT = dirname(dirname(@__DIR__))   # ADSIM_MID/
 const SRC_DIR      = joinpath(PROJECT_ROOT, "src")
 
 include(joinpath(SRC_DIR, "version.jl"))
@@ -67,7 +67,8 @@ function main()
 
     project_name = ARGS[1]
     data_dir     = joinpath(SRC_DIR, "data")
-    output_dir   = joinpath(PROJECT_ROOT, "output")
+    verification_root = joinpath(PROJECT_ROOT, "verification")
+    output_dir   = joinpath(verification_root, "output")
     mesh_file    = joinpath(data_dir, "$(project_name).mesh")
     mat_file     = joinpath(data_dir, "$(project_name)_mat.toml")
     calc_file    = joinpath(data_dir, "$(project_name)_calc.toml")
@@ -77,7 +78,7 @@ function main()
         exit(1)
     end
 
-    isdir(output_dir) || mkdir(output_dir)
+    isdir(output_dir) || mkpath(output_dir)
 
     # ── Determine current stage by checking for existing checkpoint files (kernel pattern) ──
     if isdir(output_dir)
@@ -203,24 +204,13 @@ function main()
             C_val = C_moist(model, 0.0)
             D_val = K_val / C_val
             
-            # Apply water-specific initial and boundary conditions using kernel pattern
+            # Apply water-specific initial and boundary conditions from mesh/materials files
+            # (IC should be specified in mesh file, not hardcoded)
             apply_initial_conditions_water!(mesh, materials)
-            
-            # For verification test: override with uniform IC (h = -0.5 m everywhere)
-            # This ensures all nodes are initialized regardless of mesh IC format
-            for node_id in 1:mesh.num_nodes
-                if !haskey(mesh.pressure_head_bc, node_id)
-                    h[node_id] = -0.5
-                    theta_w[node_id] = theta(model, -0.5)
-                else
-                    h[node_id] = mesh.pressure_head_bc[node_id]
-                    theta_w[node_id] = theta(model, mesh.pressure_head_bc[node_id])
-                end
-            end
             
             # Initialize flows using kernel pattern (handles boundary edges, pressure BC flows)
             initialize_all_flows!(mesh, materials, mesh.num_nodes, 0)
-            log_print("   ✓ Initial and boundary conditions applied (water-only)")
+            log_print("   ✓ Initial and boundary conditions applied (from mesh/materials)")
             log_print("   ✓ Flow vectors initialized")
             log_print("   ✓ SWRC Model: $(typeof(model).name)")
         else
@@ -270,10 +260,14 @@ function main()
         log_print(@sprintf("   ✓ Configuration: D = %.6f m²/s, K = %.4f m/s, C = %.4f m⁻¹", D_val, K_val, C_val))
         log_print("-"^64)
         
-        final_state = implicit_richards_solver(
-            mesh, materials, calc_params, time_data,
-            project_name, log_print, cache, elem_props, initial_state
-        )
+        # Solver writes VTK/checkpoints to a relative "output" path in core modules,
+        # so run from verification/ to keep all verification artifacts scoped there.
+        final_state = cd(verification_root) do
+            implicit_richards_solver(
+                mesh, materials, calc_params, time_data,
+                project_name, log_print, cache, elem_props, initial_state
+            )
+        end
         
         log_print("-"^64)
         log_print(@sprintf("   ✓ Solver completed at t = %.4f s", final_state.current_time))
@@ -283,11 +277,25 @@ function main()
         log_print("\nPost-processing: Extracting solution for verification")
         N = mesh.num_nodes
         
-        # Collect all VTK files generated (more robust matching)
-        vtk_pattern = "$(project_name)_water_*.vtk"
-        vtk_files = sort(filter(f -> occursin(r"_water_\d{6}\.vtk$", f),
-                                 readdir(output_dir)))
+        # Collect only this project's VTK files (avoid cross-project mixing)
+        vtk_pattern = Regex("^" * escape_string(project_name) * "_water_\\d{6}\\.vtk\$")
+        vtk_files = sort(filter(f -> occursin(vtk_pattern, f), readdir(output_dir)))
+        isempty(vtk_files) && error("No VTK files found for project $(project_name) in $(output_dir)")
         
+        # Parse VTK files to recover solution history and exact snapshot time.
+        function parse_vtk_time(filepath)
+            try
+                for line in eachline(filepath)
+                    m = match(r"Time\s*=\s*([0-9eE+.-]+)", line)
+                    if m !== nothing
+                        return parse(Float64, m.captures[1])
+                    end
+                end
+            catch
+            end
+            return nothing
+        end
+
         # Parse VTK files to recover solution history
         function parse_vtk_head(filepath)
             try
@@ -318,7 +326,8 @@ function main()
             h_recovered = parse_vtk_head(filepath)
             # All files should have valid data (solver wrote them)
             push!(h_hist, h_recovered)
-            push!(t_hist, (i - 1) * dt_out)  # Time based on output interval
+            t_vtk = parse_vtk_time(filepath)
+            push!(t_hist, t_vtk === nothing ? (i - 1) * dt_out : t_vtk)
         end
         
         log_print(@sprintf("   ✓ Recovered %d solution snapshots from VTK files", length(h_hist)))
@@ -407,10 +416,13 @@ function main()
 
         # Write checkpoint file for multi-stage calculations (kernel pattern)
         log_print("\nWriting checkpoint file for stage $(current_stage)...")
-        checkpoint_file = write_checkpoint(project_name, current_stage,
-                                          final_state.current_time,
-                                          final_state.output_counter,
-                                          final_state.next_output_time)
+        checkpoint_file_rel = cd(verification_root) do
+            write_checkpoint(project_name, current_stage,
+                             final_state.current_time,
+                             final_state.output_counter,
+                             final_state.next_output_time)
+        end
+        checkpoint_file = joinpath(output_dir, basename(checkpoint_file_rel))
         checkpoint_size = get_checkpoint_file_size(checkpoint_file)
         log_print("   ✓ Checkpoint saved: $(basename(checkpoint_file)) ($(checkpoint_size))")
 

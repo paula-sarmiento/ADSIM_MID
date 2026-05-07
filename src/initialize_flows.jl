@@ -90,11 +90,11 @@ function apply_boundary_flows!(mesh)
     influence_lengths = calculate_boundary_influence_lengths(mesh)
     
     # Apply nodal uniform flow boundary conditions
-    for (node_id, flows) in mesh.uniform_flow_bc        
-        @threads for gas_idx in 1:NGases
+    for (node_id, flows) in mesh.uniform_flow_bc
+        for gas_idx in 1:NGases
             # Weight flows by nodal influence length
             q_boundary[node_id, gas_idx] = flows[gas_idx] * influence_lengths[node_id]
-        end        
+        end
     end
 end
 

@@ -43,7 +43,7 @@ global P_water::Vector{Float64} = Float64[]
 global v_water::Matrix{Float64} = zeros(Float64, 0, 2)
 
 # Water BC masking (1 = free node, 0 = Dirichlet BC node)
-global P_boundary_water::Matrix{Int} = Matrix{Int}(undef, 0, 0)
+global P_boundary_water::Vector{Int} = Int[]
 
 # Water flux boundary conditions
 global q_flux_water::Vector{Float64} = Float64[]
@@ -122,7 +122,7 @@ function zero_variables!(mesh, materials)
     v_water = zeros(Float64, Nnodes, NDim)  # Water velocity [m/s]
     
     # Initialize water BC mask (1 = free, 0 = BC constrained)
-    P_boundary_water = ones(Int, Nnodes, 1)
+    P_boundary_water = ones(Int, Nnodes)
     
     # Initialize water flux boundary conditions
     q_flux_water = zeros(Float64, Nnodes)
@@ -638,7 +638,7 @@ end
 
 Mark water Dirichlet BC nodes in P_boundary_water.
 
-Sets P_boundary_water[node_id, 1] = 0 for prescribed nodes.
+Sets P_boundary_water[node_id] = 0 for prescribed nodes.
 
 # Priority
 1. volumetric_content_bc
@@ -653,14 +653,14 @@ function apply_water_dirichlet_bc!(mesh::MeshData, materials)
     
     # Priority 1: Volumetric content BC (highest priority - used before normalization)
     for (node_id, theta_bc) in mesh.volumetric_content_bc
-        P_boundary_water[node_id, 1] = 0  # Node is constrained
+        P_boundary_water[node_id] = 0  # Node is constrained
     end
     
     # Priority 2: Pressure head BC (includes converted volumetric_content_bc after normalization)
     for (node_id, h_bc) in mesh.pressure_head_bc
         # Only mark if not already marked by Priority 1
         if !haskey(mesh.volumetric_content_bc, node_id)
-            P_boundary_water[node_id, 1] = 0  # Node is constrained
+            P_boundary_water[node_id] = 0  # Node is constrained
         end
     end
     

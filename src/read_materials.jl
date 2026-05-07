@@ -324,10 +324,20 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.specific_heat_solids = Float64(soil_info["specific_heat_solids"])
         
         # Read SWRC properties (optional, backward compatible)
-        # Normalize model name: replace spaces with underscores for consistent matching
-        # GiD may write "Van Genuchten" (with space) but Julia code expects "Van_Genuchten"
-        raw_swrc_model = String(get(soil_info, "swrc_model", "None"))
-        soil_props.water.swrc_model = replace(raw_swrc_model, " " => "_")
+        # Normalize model name: strip whitespace, replace spaces with underscores, then
+        # map to canonical names case-insensitively so that "van genuchten", "Van Genuchten",
+        # and "VAN_GENUCHTEN" all resolve to "Van_Genuchten". Unrecognized names pass through
+        # unchanged and will be caught by validate_swrc_parameters().
+        raw_swrc_model = strip(String(get(soil_info, "swrc_model", "None")))
+        _swrc_canonical = Dict(
+            "none"          => "None",
+            "van_genuchten" => "Van_Genuchten",
+            "cavalcante"    => "Cavalcante",
+            "constantsoil"  => "ConstantSoil",
+            "linearsoil"    => "LinearSoil",
+        )
+        _swrc_normalized = replace(raw_swrc_model, " " => "_")
+        soil_props.water.swrc_model = get(_swrc_canonical, lowercase(_swrc_normalized), _swrc_normalized)
         soil_props.water.swrc_max_anw = Float64(get(soil_info, "swrc_max_anw", 0.0))
         soil_props.water.swrc_saturation_max_anw = Float64(get(soil_info, "swrc_saturation_max_anw", 0.0))
         soil_props.water.swrc_vg_alpha = Float64(get(soil_info, "swrc_vg_alpha", 0.0))
@@ -515,7 +525,7 @@ function validate_swrc_parameters(materials::MaterialData)
                 error("""
                 SWRC Validation Error: '$soil_name' has unknown SWRC model: '$(soil.water.swrc_model)'
                 
-                Valid SWRC models are:
+                Valid SWRC models are (case-insensitive, spaces or underscores accepted):
                 - "None"
                 - "Van_Genuchten"
                 - "Cavalcante"
