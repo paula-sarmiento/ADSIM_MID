@@ -13,7 +13,14 @@
       "Bash(rm -f output/CeliaCol_stage*.jld2)",
       "Bash(julia debug_step1.jl)",
       "Bash(julia run_celia_3dt.jl)",
-      "Bash(julia plot_celia_3dt.jl)"
+      "Bash(julia plot_celia_3dt.jl)",
+      "Bash(git -C /Users/paula/Documents/GitHub/ADSIM_MID log --oneline -10)",
+      "Bash(git -C /Users/paula/Documents/GitHub/ADSIM_MID log --oneline --name-only -5)",
+      "Bash(git -C /Users/paula/Documents/GitHub/ADSIM_MID show b21cb59 -- src/kernel.jl)",
+      "Bash(julia --project=. -e ' *)",
+      "Bash(julia --project=. run_linear_diffusion_verification.jl)",
+      "Bash(julia --project=. run_linear_diffusion_verification.jl LinVerif_diffusion)",
+      "Bash(julia --project=. run_celia_verification.jl Celia)"
     ]
   }
 }
