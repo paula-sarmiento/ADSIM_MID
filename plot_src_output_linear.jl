@@ -1,6 +1,5 @@
-# Plot src/output Linear Diffusion VTK Data
-# Extracts and visualizes Matric_Head profiles from
-# src/output/LinDiffusion_water_*.vtk files
+# Plot Linear Diffusion VTK Data - Overlay src/output vs verification/output
+# Extracts and visualizes Matric_Head profiles from both output directories
 
 using Printf, Plots, Statistics
 
@@ -91,78 +90,58 @@ end
 
 # Main plotting routine
 function main()
-    output_dir = "src/output"
-    
-    if !isdir(output_dir)
-        error("Output directory not found: $output_dir")
+    src_dir  = "src/output"
+    ver_dir  = "verification/output"
+
+    for d in (src_dir, ver_dir)
+        isdir(d) || error("Output directory not found: $d")
     end
-    
-    # Collect all Linear VTK files
-    vtk_files = filter(f -> occursin(r"^LinDiffusion_water_\d{6}\.vtk$", f), readdir(output_dir))
-    sort!(vtk_files)
-    
-    if isempty(vtk_files)
-        error("No LinDiffusion VTK files found in $output_dir")
+
+    vtk_pattern = r"^LinDiffusion_water_\d{6}\.vtk$"
+    src_files = sort(filter(f -> occursin(vtk_pattern, f), readdir(src_dir)))
+    ver_files = sort(filter(f -> occursin(vtk_pattern, f), readdir(ver_dir)))
+
+    isempty(src_files) && error("No VTK files found in $src_dir")
+    isempty(ver_files) && error("No VTK files found in $ver_dir")
+
+    println("src/output:          $(length(src_files)) VTK files")
+    println("verification/output: $(length(ver_files)) VTK files")
+
+    # Select representative snapshot indices (t=0, 25%, 50%, 75%, 100%)
+    n = length(src_files)
+    indices = unique([1, div(n,4), div(n,2), div(3n,4), n])
+
+    # Colours — one per time snapshot; src = solid, ver = dashed
+    colours = [:royalblue, :darkorange, :green3, :crimson, :purple]
+
+    p = plot(
+        xlabel = "Matric Head h (m)",
+        ylabel = "Elevation y (m)",
+        title  = "Linear Diffusion — Kernel vs Verification",
+        legend = :outertopright,
+        size   = (1000, 650),
+        margin = 5Plots.mm,
+    )
+
+    for (ci, idx) in enumerate(indices)
+        src_path = joinpath(src_dir, src_files[idx])
+        ver_path = joinpath(ver_dir, ver_files[idx])
+
+        y_s, h_s, t_s = parse_vtk_linear_data(src_path)
+        y_v, h_v, t_v = parse_vtk_linear_data(ver_path)
+
+        tstr = @sprintf("t = %.3f s", t_s)
+        c    = colours[ci]
+
+        plot!(p, h_s, y_s; label="Kernel — $tstr",       color=c, linewidth=2,
+              linestyle=:solid,  marker=:circle, markersize=3, alpha=0.85)
+        plot!(p, h_v, y_v; label="Verification — $tstr", color=c, linewidth=2,
+              linestyle=:dash,   marker=:diamond, markersize=4, alpha=0.65)
     end
-    
-    println("Found $(length(vtk_files)) VTK files")
-    
-    # Select representative times for plotting
-    indices = [1, div(length(vtk_files), 4), div(length(vtk_files), 2), div(3*length(vtk_files), 4), length(vtk_files)]
-    unique!(indices)
-    
-    # Parse VTK data at selected times
-    plot_data = []
-    times = []
-    
-    for idx in indices
-        filepath = joinpath(output_dir, vtk_files[idx])
-        println("Processing: $(vtk_files[idx])")
-        
-        try
-            y_coords, matric_head, time = parse_vtk_linear_data(filepath)
-            push!(plot_data, (y_coords, matric_head))
-            push!(times, time)
-        catch e
-            println("Error processing $(vtk_files[idx]): $e")
-        end
-    end
-    
-    if isempty(plot_data)
-        error("No valid data extracted from VTK files")
-    end
-    
-    # Create plot
-    p = plot(xlabel="Matric Head h (m)", ylabel="Depth y (m)", title="src/output Linear Diffusion - Matric Head Profiles",
-             legend=:bottomright, size=(900, 600), margin=5Plots.mm)
-    
-    for i in eachindex(plot_data)
-        y, h = plot_data[i]
-        if length(y) == length(h)
-            label_str = @sprintf("t = %.3f s", times[i])
-            plot!(p, h, y, label=label_str, linewidth=2, marker=:o, markersize=3, alpha=0.7)
-        else
-            println("Warning: length mismatch for index $i (y=$(length(y)), h=$(length(h)))")
-        end
-    end
-    
-    # Save plot
-    output_plot = joinpath(output_dir, "src_output_linear_profiles.png")
+
+    output_plot = joinpath(src_dir, "src_vs_verification_profiles.png")
     savefig(p, output_plot)
-    println("Plot saved: $output_plot")
-    
-    # Summary statistics
-    println("\n" * "-"^60)
-    println("src/output Linear Diffusion VTK Data Summary")
-    println("-"^60)
-    println("Total VTK files: $(length(vtk_files))")
-    println("Time range: $(times[begin]) to $(times[end]) s")
-    println("Number of spatial profiles plotted: $(length(plot_data))")
-    for i in eachindex(plot_data)
-        y, h = plot_data[i]
-        println(@sprintf("  t=%.3f s: y ∈ [%.3f, %.3f] m, h ∈ [%.3f, %.3f] m", 
-                        times[i], minimum(y), maximum(y), minimum(h), maximum(h)))
-    end
+    println("\nPlot saved: $output_plot")
     println("-"^60)
 end
 

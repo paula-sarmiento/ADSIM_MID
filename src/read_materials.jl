@@ -726,9 +726,6 @@ Falls back to first soil if no material assignment exists.
 """
 function get_element_water_props(mesh, materials, elem_id::Int) :: ElementWaterProps
     mat_idx = get_element_material(mesh, elem_id)
-    if mat_idx === nothing
-        mat_idx = 1
-    end
 
     soil_name = materials.soil_dictionary[mat_idx]
     soil = materials.soils[soil_name]

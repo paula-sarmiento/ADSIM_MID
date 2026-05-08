@@ -912,7 +912,7 @@ end
 
 
 """
-get_element_material(mesh::MeshData, elem_id::Int) -> Union{Int, Nothing}
+get_element_material(mesh::MeshData, elem_id::Int) -> Int
 
 Get the material index assigned to an element.
 
@@ -924,7 +924,7 @@ Get the material index assigned to an element.
 - `Union{Int, Nothing}`: Material index or nothing if not assigned
 """
 function get_element_material(mesh::MeshData, elem_id::Int)
-    return get(mesh.materials, elem_id, nothing)
+    return get(mesh.materials, elem_id, 1)
 end
 
 
