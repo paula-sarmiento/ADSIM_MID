@@ -115,6 +115,71 @@ end
 
 
 """
+    suggest_implicit_water_dt(soil::SWRCModel, mesh::MeshData, F::Float64=50.0) -> Float64
+
+Suggest an implicit time step for water-only (Richards equation) solver.
+
+For water-only simulations without gas coupling, compute an aggressive time step
+based on the explicit stability criterion scaled by amplification factor F.
+
+# Arguments
+- `soil::SWRCModel`: Any SWRC model instance (VanGenuchten, ConstantSoil, etc.)
+- `mesh::MeshData`: Mesh data structure
+- `F::Float64`: Time step amplification factor (default: 50.0)
+
+# Returns
+- `Float64`: Suggested time step Δt_impl [s]
+
+# Formula
+```
+    dt_suggested = F × 0.5 × l_min² / (4 × D_max)
+    where: D_max = K_h(soil, 0.0) / C_min
+           K_h(soil, 0.0) = K_sat (saturation conductivity)
+           C_min = 1e-4 m⁻¹ (regularization constant)
+           l_min = minimum element characteristic length [m]
+```
+
+# Notes
+- Backward Euler (implicit) is unconditionally stable in theory
+- Δt is limited by precision and Picard convergence, not stability
+- Uses polymorphic dispatch: works for any SWRC model without conditionals
+- If Picard converges in ≤3 iterations: can increase F
+- If Picard needs >7 iterations or diverges: reduce F to F/2
+
+# Example
+```julia
+dt_suggested = suggest_implicit_water_dt(soil_model, mesh, 50.0)
+```
+"""
+function suggest_implicit_water_dt(soil::SWRCModel, mesh::MeshData, F::Float64=50.0)
+    # Regularization constant for C_moist (same as in swrc_models.jl)
+    C_min = 1.0e-4  # [m⁻¹]
+    CFL = 0.5
+    
+    # Get minimum element characteristic length
+    l_min = find_minimum_characteristic_length(mesh)
+    
+    # Use polymorphic dispatch to compute K_sat and C_min from soil model
+    # K_h at saturation (h=0) gives K_sat for any SWRC model
+    K_sat = K_h(soil, 0.0)
+    
+    # C_moist at saturation (h=0) - for regularized version
+    C_actual = C_moist(soil, 0.0)
+    
+    # Use maximum of regularization constant and actual C
+    C_eff = max(C_min, C_actual)
+    
+    # Compute D_max = K_sat / C_eff
+    D_max = K_sat / C_eff
+    
+    # Compute suggested time step: dt = F * CFL * l_min² / (4 * D_max)
+    dt_suggested = F * CFL * l_min^2 / (4.0 * D_max)
+    
+    return dt_suggested
+end
+
+
+"""
     get_maximum_diffusion_coefficient(materials) -> Float64
 
 Get the maximum diffusion coefficient among all gases.
@@ -344,31 +409,69 @@ end
 
 
 """
-    calculate_critical_time_step(mesh::MeshData, materials, T_ref::Float64) -> Float64
+    calculate_critical_time_step(mesh::MeshData, materials, calc_params::Dict, T_ref::Float64) -> Tuple{Float64, String}
 
-Calculate the critical time step based on three stability criteria:
+Calculate the critical time step based on simulation type and stability criteria.
+
+## Water-Only (Richards) Case
+For water-flow-only simulations (no gas transport/reaction), use implicit Backward Euler
+time stepping with polymorphic SWRC dispatch:
+```
+    Δt_crit = F × 0.5 × h_min² / (4 × D_max)
+    where: D_max = K_h(soil, 0.0) / C_min
+           K_h(soil, 0.0) = K_sat (saturation conductivity, any SWRC model)
+           C_min = 1e-4 m⁻¹ (regularization constant)
+           F = implicit_water_dt_factor (default 50.0)
+```
+
+## Multi-Physics Case
+For coupled simulations, compute minimum of three stability criteria:
 1. Diffusive time scale: h_min² × τ / (θ_g × D_max)
 2. Advective time scale: h_min² × (μ_g / (C_g^i × K × T × R))_min
 3. Reactive time scale: 1 / (κ × θ_w × C_CO2_max)
 
-The critical time step is the minimum of these three values.
-
 # Arguments
 - `mesh::MeshData`: Mesh data structure
 - `materials`: Material data structure
+- `calc_params::Dict`: Calculation parameters (solver_settings, time_stepping)
 - `T_ref::Float64`: Reference temperature [K]
 
 # Returns
-- `Float64`: Critical time step Δt_crit [s]
-
-# Formula
-```
-Δt_crit = min{ h_min² × τ / (θ_g × D_max),
-               h_min² × (μ_g / (C_g^i × K × T × R))_min,
-               1 / (κ × θ_w × C_CO2_max) }
-```
+- `Tuple{Float64, String}`: (Critical time step [s], limiting scale description)
 """
-function calculate_critical_time_step(mesh, materials, T_ref::Float64)
+function calculate_critical_time_step(mesh, materials, calc_params::Dict, T_ref::Float64)
+    # Check if this is water-flow-only case (Richards equation, no transport/reaction)
+    solver_settings = get(calc_params, "solver_settings", Dict())
+    water_flow = get(solver_settings, "water_flow", 0)
+    diffusion = get(solver_settings, "diffusion", 0)
+    advection = get(solver_settings, "advection", 0)
+    reaction = get(solver_settings, "reaction_kinetics", 0)
+    
+    # WATER-ONLY CASE: Use implicit water dt calculation with polymorphic dispatch
+    if water_flow == 1 && diffusion == 0 && advection == 0 && reaction == 0
+        F = get(get(calc_params, "time_stepping", Dict()), "implicit_water_dt_factor", 50.0)
+        
+        # Get first soil with water properties for dt calculation
+        dt_critical = Inf
+        limiting_scale = "Water-only (implicit, no soil properties found)"
+        
+        for soil_name in materials.soil_dictionary
+            soil = materials.soils[soil_name]
+            if hasproperty(soil, :water) && soil.water !== nothing
+                swrc_model = soil.water.swrc_model_instance
+                if swrc_model !== nothing
+                    dt_critical = suggest_implicit_water_dt(swrc_model, mesh, F)
+                    F_int = isfinite(F) ? Int(round(F)) : 50
+                    limiting_scale = "Implicit-water (F=$(F_int)× explicit, unconditionally stable)"
+                    return dt_critical, limiting_scale
+                end
+            end
+        end
+        
+        return dt_critical, limiting_scale
+    end
+    
+    # MULTI-PHYSICS CASE: Calculate traditional critical time steps
     # Find minimum characteristic length
     h_min = find_minimum_characteristic_length(mesh)
     
@@ -418,7 +521,7 @@ function calculate_critical_time_step(mesh, materials, T_ref::Float64)
     end
     
     # Return minimum of all three time scales and the limiting scale
-    return min(dt_diffusion, dt_advection, dt_reaction), limiting_scale
+    return (min(dt_diffusion, dt_advection, dt_reaction), limiting_scale)
 end
 
 
@@ -458,8 +561,8 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
     end
 
     
-    # Calculate critical time step
-    time_data.critical_dt, limiting_scale = calculate_critical_time_step(mesh, materials, T_ref)
+    # Calculate critical time step (detects water-only case internally)
+    time_data.critical_dt, limiting_scale = calculate_critical_time_step(mesh, materials, calc_params, T_ref)
     
     # Get Courant number from calculation parameters
     time_data.courant_number = calc_params["time_stepping"]["courant_number"]
@@ -470,22 +573,8 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
     # Get time per load step (when data is saved)
     time_data.time_per_step = calc_params["time_stepping"]["time_per_step"]
     
-    # HOTFIX: For water-flow-only (Richards equation) with no transport/reaction,
-    # critical_dt may be Inf. Use user-specified time_per_step as the actual time step.
-    if !isfinite(time_data.actual_dt)
-        # Check if this is water-flow-only case
-        solver_settings = get(calc_params, "solver_settings", Dict())
-        water_flow = get(solver_settings, "water_flow", 0)
-        diffusion = get(solver_settings, "diffusion", 0)
-        advection = get(solver_settings, "advection", 0)
-        reaction = get(solver_settings, "reaction_kinetics", 0)
-        
-        if water_flow == 1 && diffusion == 0 && advection == 0 && reaction == 0
-            # Use time_per_step as the actual time step for water-flow-only
-            time_data.actual_dt = time_data.time_per_step
-            limiting_scale = "Water-flow-only (user-specified dt)"
-        end
-    end
+    # Store minimum characteristic length
+    time_data.h_min = find_minimum_characteristic_length(mesh)
     
     # Calculate number of time steps per load step
     time_data.num_steps_per_load = ceil(Int, time_data.time_per_step / time_data.actual_dt)
@@ -499,9 +588,6 @@ function calculate_time_step_info(mesh, materials, calc_params::Dict)
     # Calculate total number of time steps for entire simulation
     time_data.num_steps = time_data.num_steps_per_load * time_data.num_load_steps
     
-    # Store minimum characteristic length
-    time_data.h_min = find_minimum_characteristic_length(mesh)
-    
     return time_data, limiting_scale
 end
 
@@ -509,6 +595,7 @@ end
 # Export all public functions and types
 export TimeStepData
 export calculate_element_characteristic_length, find_minimum_characteristic_length
+export suggest_implicit_water_dt
 export get_maximum_diffusion_coefficient, get_minimum_gas_viscosity
 export get_maximum_initial_concentration, get_maximum_co2_concentration
 export calculate_critical_time_step, calculate_time_step_info

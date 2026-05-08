@@ -243,13 +243,13 @@ function assemble_richards!(
     for j in 1:n
         for k in A.colptr[j]:(A.colptr[j+1] - 1)
             i = A.rowval[k]
-            if P_boundary_water[i, 1] == 0   # BC node: enforce identity row
+            if P_boundary_water[i] == 0   # BC node: enforce identity row
                 A.nzval[k] = (i == j) ? 1.0 : 0.0
             end
         end
     end
     for i in 1:n
-        if P_boundary_water[i, 1] == 0
+        if P_boundary_water[i] == 0
             R[i] = 0.0
         end
     end
@@ -260,7 +260,7 @@ function assemble_richards!(
     # ─────────────────────────────────────────────────────────────────
     global q_flux_water
     for i in 1:mesh.num_nodes
-        if P_boundary_water[i, 1] != 0 && q_flux_water[i] != 0.0
+        if P_boundary_water[i] != 0 && q_flux_water[i] != 0.0
             R[i] += q_flux_water[i]
         end
     end
@@ -289,11 +289,11 @@ end
 
 
 
-#[LZC-RESOLVED] Neumann BC assembly: Flow BCs ARE assembled a priori at solver startup
-# via zero_flow_vectors_water!() + apply_boundary_flows_water!()
-# Pre-computed q_boundary_water[i] is added to the residual in assemble_richards!()
-# Alternative: apply_neumann_edge_richards!() (now in initialize_variables.jl) for edge-based
-# assembly (not used — kept for reference)
+# Neumann BC assembly: flow BCs are assembled a priori at solver startup
+# via zero_flow_vectors_water!() + apply_boundary_flows_water!().
+# Pre-computed q_boundary_water[i] is added to the residual in assemble_richards!().
+# Edge-based alternative: apply_neumann_edge_richards!() in initialize_variables.jl is
+# called by apply_water_flux_bc!() for liquid-discharge BCs (nodal flux BCs go through q_flux_water).
 
 
 # Picard iteration solver (one time step)
@@ -350,9 +350,19 @@ function picard_richards!(
 )
     N = mesh.num_nodes
     R = zeros(Float64, N)
+    
+    # ── Store initial Dirichlet BC values from mesh ──────────────────────────
+    # Nodes where pressure_head_bc dictionary has entries are Dirichlet BCs
+    dbc_nodes = collect(keys(mesh.pressure_head_bc))
+    dbc_vals  = [mesh.pressure_head_bc[i] for i in dbc_nodes]
+    
+    res_history = Float64[]
 
-    # ── Cold start: reset to previous time step (Colab pattern) ────────
+    # ── Cold start: reset to previous time step and apply Dirichlet BCs ────────
     h_curr .= h_prev
+    for (i, val) in zip(dbc_nodes, dbc_vals)
+        h_curr[i] = val
+    end
 
     for m in 1:max_iter
         # Step 1: Assemble nonlinear system (A and R depend on current h)
@@ -361,19 +371,26 @@ function picard_richards!(
         # Step 2: Solve for pressure head increments
         delta = A \ R
         delta_norm = maximum(abs.(delta))
+        push!(res_history, delta_norm)
 
-        # Step 3: Update pressure head
-        h_curr .+= ω .* delta
-
-        # Step 4: Check convergence
+        # Step 3: Check convergence
         if delta_norm < tol
-            return m
+            return m, res_history
+        end
+
+        # Step 4: Update pressure head
+        h_curr .+= ω .* delta
+        
+        # ✅ KEY (from Colab): Re-enforce Dirichlet BCs after update
+        # This ensures boundary nodes stay at prescribed values through iterations
+        for (i, val) in zip(dbc_nodes, dbc_vals)
+            h_curr[i] = val
         end
     end
 
     # Non-convergence: Backward Euler is unconditionally stable so solution is accepted
-    @warn "Picard did not converge in $max_iter iterations"
-    return max_iter
+    @warn "Picard did not converge in $max_iter iterations. ||δ|| = $(res_history[end])"
+    return max_iter, res_history
 end
 
 
@@ -451,7 +468,7 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
 
     # ── Extract parameters ────────────────────────────────────────────
     dt = time_data.actual_dt
-    load_step_time = calc_params["data_saving_interval"]
+    load_step_time = time_data.time_per_step
 
     gx = calc_params["gravity"]["x_component"]
     gy = calc_params["gravity"]["y_component"]
@@ -495,8 +512,8 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
             nj = mesh.elements[e, b]
             if mesh.coordinates[ni, 2] < y_min + tol_y &&
                mesh.coordinates[nj, 2] < y_min + tol_y &&
-               P_boundary_water[ni, 1] != 0 &&
-               P_boundary_water[nj, 1] != 0
+               P_boundary_water[ni] != 0 &&
+               P_boundary_water[nj] != 0
                 key = (min(ni,nj), max(ni,nj))
                 if key ∉ seen_edges
                     push!(seen_edges, key)
@@ -532,7 +549,15 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     # ── Time loop ─────────────────────────────────────────────────────
     h_new = copy(h)
     total_time = calc_params["time_stepping"]["total_simulation_time"]
+    nonlinear_solver = get(calc_params, "nonlinear_solver", Dict{String, Any}())
+    picard_tol = Float64(get(nonlinear_solver, "picard_tolerance", 1.0e-8))
+    picard_max_iter = Int(get(nonlinear_solver, "picard_max_iter", 100))
+    picard_relaxation = Float64(get(nonlinear_solver, "picard_relaxation", 1.0))
+
+    log_print(@sprintf("   Picard settings: tol = %.3e, max_iter = %d, ω = %.2f",
+                        picard_tol, picard_max_iter, picard_relaxation))
     step_count = 0
+    picard_history = Int[]  # n_iter per output step
 
     while current_time < total_time - 1e-10
         step_count += 1
@@ -543,9 +568,9 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
         # not whether dt was shortened (which misses exact-hit cases).
 
         # ── Picard iteration ──────────────────────────────────────────
-        n_iter = picard_richards!(h_new, h, mesh, elem_props, dt_step, e_g,
+        n_iter, res_history = picard_richards!(h_new, h, mesh, elem_props, dt_step, e_g,
                                    A, cache, bot_edges;
-                                   tol=1e-4, max_iter=100, ω=1.0)
+                                   tol=picard_tol, max_iter=picard_max_iter, ω=picard_relaxation)
 
         # ── Accept step ───────────────────────────────────────────────
         h .= h_new
@@ -556,6 +581,7 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
         at_output = current_time >= next_output_time - 1e-10
         at_end    = current_time >= total_time - 1e-10
         if at_output || at_end
+            push!(picard_history, n_iter)
             progress = 100.0 * current_time / total_time
             log_print(@sprintf("      Load Step %d (%.1f%%), Time = %.4e %s, Picard = %d",
                                 output_counter, progress, current_time,
@@ -576,5 +602,5 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     log_print("   ✓ Richards solver completed")
     log_print(@sprintf("   ✓ Final time: %.4e %s", current_time, calc_params["units"]["time_unit"]))
 
-    return (current_time=current_time, output_counter=output_counter, next_output_time=next_output_time)
+    return (current_time=current_time, output_counter=output_counter, next_output_time=next_output_time, picard_history=picard_history)
 end

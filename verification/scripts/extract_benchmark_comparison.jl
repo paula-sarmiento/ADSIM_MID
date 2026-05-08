@@ -10,81 +10,127 @@ Compares:
   - Time snapshots at t=0h, 6h, 12h, 18h, 24h (finest run)
   - Quantitative metrics (front penetration, saturation levels)
 
-Run from: src/ directory with julia --project=.. extract_benchmark_comparison.jl
+Run from: verification/scripts with julia extract_benchmark_comparison.jl
 """
 
 using Printf
 using Plots
 using Statistics
 
-include("swrc_models.jl")
+include(joinpath(@__DIR__, "..", "..", "src", "swrc_models.jl"))
 
 println("="^70)
 println("  BENCHMARK PROFILE EXTRACTION & COMPARISON")
 println("="^70)
 
-# VanGenuchten model for Celia 1990 benchmark
+# VanGenuchten model for Celia 1990 benchmark (Haverkamp sand, SI units)
+# K_sat computed from intrinsic_permeability=9.4e-12 m², μ=1e-3 Pa·s, ρg=9810 N/m³
+# K_sat = k·ρg/μ = 9.4e-12 * 9810 / 1e-3 ≈ 9.22e-5 m/s
 vg_celia = VanGenuchten(
     theta_s=0.368, theta_r=0.102,
-    alpha=0.335, n_vg=2.0,
-    K_s=9.4e-12,
-    K_s_x=9.4e-12, K_s_y=9.4e-12,
+    alpha=3.35, n_vg=2.0,
+    K_s=9.22e-5,
+    K_s_x=9.22e-5, K_s_y=9.22e-5,
     L=0.5
 )
 
-# Benchmark configurations
+# Verification benchmark configurations (verification-only cases)
 benchmark_cases = [
     (prefix="CeliaCol_dt144",  label="Δt=2.4 min (144s)",  color=:black),
     (prefix="CeliaCol_dt720",  label="Δt=12 min (720s)",   color=:steelblue),
     (prefix="CeliaCol_dt3600", label="Δt=60 min (3600s)",  color=:firebrick)
 ]
 
-output_dir = "../output"
+output_dir = joinpath(@__DIR__, "..", "..", "output")
+plots_dir = joinpath(@__DIR__, "..", "plots")
+mkpath(plots_dir)
 
 # ──────────────────────────────────────────────────────────────────────
 # VTK parsing function
 # ──────────────────────────────────────────────────────────────────────
 
-function read_vtk_points_field(filename)
+function read_vtk_points_field(filename; field_name::String="Matric_Head")
     open(filename, "r") do f
         lines = readlines(f)
-        
-        # Find POINTS
+
+        # Find POINTS and parse all 3*n_pts coordinate values
         pt_idx = findfirst(l -> startswith(l, "POINTS"), lines)
         if pt_idx === nothing
             error("No POINTS found in $filename")
         end
         n_pts = parse(Int, split(lines[pt_idx])[2])
-        
-        points = zeros(Float64, n_pts, 3)
-        idx = 0
-        for i in (pt_idx+1):length(lines)
-            coords = split(lines[i])
-            for c in coords
-                idx += 1
-                if idx > n_pts break end
-                points[idx, mod1(idx, 3)] = parse(Float64, c)
+
+        coords_flat = Float64[]
+        for i in (pt_idx + 1):length(lines)
+            line = strip(lines[i])
+            if isempty(line)
+                continue
             end
-            idx > n_pts && break
-        end
-        
-        # Find POINT_DATA scalar
-        pd_idx = findfirst(l -> startswith(l, "POINT_DATA"), lines)
-        sc_idx = findnext(l -> startswith(l, "SCALARS"), lines, pd_idx)
-        lk_idx = findnext(l -> startswith(l, "LOOKUP_TABLE"), lines, sc_idx)
-        
-        values = Float64[]
-        for i in (lk_idx+1):length(lines)
-            for v in split(lines[i])
+            startswith(line, "CELLS") && break
+            startswith(line, "POINT_DATA") && break
+
+            for tok in split(line)
                 try
-                    push!(values, parse(Float64, v))
-                    length(values) == n_pts && break
-                catch end
+                    push!(coords_flat, parse(Float64, tok))
+                catch
+                end
+                length(coords_flat) >= 3 * n_pts && break
             end
-            length(values) == n_pts && break
+            length(coords_flat) >= 3 * n_pts && break
         end
-        
-        return points[:, 1:2], values
+
+        if length(coords_flat) < 3 * n_pts
+            error("Incomplete POINTS data in $filename: expected $(3*n_pts), got $(length(coords_flat))")
+        end
+
+        points = reshape(coords_flat[1:3*n_pts], 3, n_pts)'
+
+        # Find POINT_DATA and requested scalar field
+        pd_idx = findfirst(l -> startswith(l, "POINT_DATA"), lines)
+        pd_idx === nothing && error("No POINT_DATA found in $filename")
+
+        sc_idx = nothing
+        for i in (pd_idx + 1):length(lines)
+            line = strip(lines[i])
+            if startswith(line, "SCALARS")
+                parts = split(line)
+                if length(parts) >= 2 && parts[2] == field_name
+                    sc_idx = i
+                    break
+                end
+            end
+        end
+
+        # Fallback: first scalar field if requested one is absent
+        if sc_idx === nothing
+            sc_idx = findnext(l -> startswith(l, "SCALARS"), lines, pd_idx)
+            sc_idx === nothing && error("No SCALARS field found in $filename")
+        end
+
+        lk_idx = findnext(l -> startswith(l, "LOOKUP_TABLE"), lines, sc_idx)
+        lk_idx === nothing && error("No LOOKUP_TABLE after SCALARS in $filename")
+
+        values = Float64[]
+        for i in (lk_idx + 1):length(lines)
+            line = strip(lines[i])
+            isempty(line) && continue
+            startswith(line, "SCALARS") && break
+
+            for tok in split(line)
+                try
+                    push!(values, parse(Float64, tok))
+                catch
+                end
+                length(values) >= n_pts && break
+            end
+            length(values) >= n_pts && break
+        end
+
+        if length(values) < n_pts
+            error("Incomplete SCALARS data in $filename: expected $n_pts, got $(length(values))")
+        end
+
+        return points[:, 1:2], values[1:n_pts]
     end
 end
 
@@ -191,6 +237,8 @@ end
 p_final = plot(p1, p2, layout=(1,2), size=(1400, 550),
                plot_title="Celia et al. (1990) Fig 6B: Convergence Study")
 display(p_final)
+savefig(p_final, joinpath(plots_dir, "extract_benchmark_final_profiles.png"))
+println("✓ Saved: $(joinpath(plots_dir, "extract_benchmark_final_profiles.png"))")
 
 # ══════════════════════════════════════════════════════════════════════
 # PLOT 2: Time evolution for finest timestep (dt=144s)
@@ -228,6 +276,8 @@ if haskey(all_profiles, finest_label)
     p_evol = plot(p_t_h, p_t_theta, layout=(1,2), size=(1400, 550),
                   plot_title="Time Evolution (Finest: Δt=2.4 min)")
     display(p_evol)
+    savefig(p_evol, joinpath(plots_dir, "extract_benchmark_time_evolution.png"))
+    println("✓ Saved: $(joinpath(plots_dir, "extract_benchmark_time_evolution.png"))")
 end
 
 # ══════════════════════════════════════════════════════════════════════

@@ -26,11 +26,10 @@ include("swrc_models.jl")
 include("initialize_variables.jl")
 include("initialize_flows.jl")
 include("time_step.jl")
-include("time_step_water.jl")
 include("shape_functions.jl")
 include("write_vtk.jl")
+include("implicit_richards_solver.jl")
 include("fully_explicit_solver.jl")
-include("fully_explicit_solver_water.jl")
 include("write_checkpoint.jl")
 include("read_checkpoint.jl")
 
@@ -175,7 +174,7 @@ function main()
         end
 
         # Step 3.6: Validate SWRC parameters if any soil uses SWRC
-        swrc_used = any(soil.swrc_model != "None" for (name, soil) in materials.soils)
+        swrc_used = any(soil.water.swrc_model != "None" for (name, soil) in materials.soils)
         if swrc_used
             log_print("\nValidating SWRC parameters")
             validate_swrc_parameters(materials)
@@ -281,20 +280,26 @@ function main()
         log_print(@sprintf("   ✓ Actual time step: %.4g %s", time_data.actual_dt, calc_params["units"]["time_unit"]))
         log_print("   ✓ Number of time steps: $(time_data.num_steps)")
 
-        # Step 8: Run fully explicit solver
+        # Step 8: Run selected solver
         # ═══════════════════════════════════════════════════════════════════════════════════
-        # Determine which solver to use based on solver type in calc_params
+        # Determine which solver to use from solver flags in calc_params
+        # Water-only cases run the implicit Richards solver.
+        # All other cases fall back to the existing gas diffusion solver.
         # ═══════════════════════════════════════════════════════════════════════════════════
-        solver_type = get(calc_params["solver_settings"], "solver_type", "gas")
-        
-        if solver_type == "water"
-            log_print("\n[8/8] Running water flow solver (Richards equation)")
-            final_state = fully_explicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
-        elseif solver_type == "gas"
+        solver_settings = calc_params["solver_settings"]
+        water_only = get(solver_settings, "water_flow", 0) == 1 &&
+                     get(solver_settings, "diffusion", 0) == 0 &&
+                     get(solver_settings, "advection", 0) == 0 &&
+                     get(solver_settings, "reaction_kinetics", 0) == 0
+
+        if water_only
+            log_print("\n[8/8] Running water flow solver (Richards equation, implicit)")
+            cache = build_richards_cache(mesh)
+            elem_props = precompute_element_water_props(mesh, materials)
+            final_state = implicit_richards_solver(mesh, materials, calc_params, time_data, project_name, log_print, cache, elem_props, initial_state)
+        else
             log_print("\n[8/8] Running gas diffusion solver (advection-diffusion)")
             final_state = fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state)
-        else
-            error("Unknown solver type: '$solver_type'. Must be 'gas' or 'water'.")
         end
 
         # Write checkpoint file for multi-stage calculations

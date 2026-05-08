@@ -86,6 +86,8 @@ mutable struct WaterSoilProperties
     swrc_vg_alpha::Float64
     swrc_vg_n::Float64
     swrc_cav_delta::Float64
+    h_min::Float64
+    K_val::Float64
     theta_s::Float64
     theta_r::Float64
     K_sat::Float64
@@ -101,7 +103,7 @@ mutable struct WaterSoilProperties
     function WaterSoilProperties()
         # Dummy closures (will be replaced if hydraulic properties are provided)
         dummy_func = (x) -> 0.0
-        new(0.0, "None", 0.0, 0.0, 0.0, 0.0, 0.0,
+        new(0.0, "None", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0, 0.0,
             dummy_func, dummy_func, dummy_func, dummy_func, dummy_func, nothing)
     end
@@ -322,15 +324,29 @@ function parse_soil_properties!(materials::MaterialData, soil_data::Dict)
         soil_props.specific_heat_solids = Float64(soil_info["specific_heat_solids"])
         
         # Read SWRC properties (optional, backward compatible)
-        # Normalize model name: replace spaces with underscores for consistent matching
-        # GiD may write "Van Genuchten" (with space) but Julia code expects "Van_Genuchten"
-        raw_swrc_model = String(get(soil_info, "swrc_model", "None"))
-        soil_props.water.swrc_model = replace(raw_swrc_model, " " => "_")
+        # Normalize model name: strip whitespace, replace spaces with underscores, then
+        # map to canonical names case-insensitively so that "van genuchten", "Van Genuchten",
+        # and "VAN_GENUCHTEN" all resolve to "Van_Genuchten". Unrecognized names pass through
+        # unchanged and will be caught by validate_swrc_parameters().
+        raw_swrc_model = strip(String(get(soil_info, "swrc_model", "None")))
+        _swrc_canonical = Dict(
+            "none"          => "None",
+            "van_genuchten" => "Van_Genuchten",
+            "cavalcante"    => "Cavalcante",
+            "constantsoil"  => "ConstantSoil",
+            "linearsoil"    => "LinearSoil",
+        )
+        _swrc_normalized = replace(raw_swrc_model, " " => "_")
+        soil_props.water.swrc_model = get(_swrc_canonical, lowercase(_swrc_normalized), _swrc_normalized)
         soil_props.water.swrc_max_anw = Float64(get(soil_info, "swrc_max_anw", 0.0))
         soil_props.water.swrc_saturation_max_anw = Float64(get(soil_info, "swrc_saturation_max_anw", 0.0))
         soil_props.water.swrc_vg_alpha = Float64(get(soil_info, "swrc_vg_alpha", 0.0))
         soil_props.water.swrc_vg_n = Float64(get(soil_info, "swrc_vg_n", 0.0))
         soil_props.water.swrc_cav_delta = Float64(get(soil_info, "swrc_cav_delta", 0.0))
+        
+        # ConstantSoil-specific parameters
+        soil_props.water.h_min = Float64(get(soil_info, "h_min", 0.0))
+        soil_props.water.K_val = Float64(get(soil_info, "K_val", 0.0))
         
         # Store residual_water_content in water struct
         soil_props.water.residual_water_content = Float64(get(soil_info, "residual_water_content", 0.0))
@@ -501,14 +517,20 @@ function validate_swrc_parameters(materials::MaterialData)
                     """)
                 end
             
+            # Verification / test models: no extra parameter checks beyond existence
+            elseif soil.water.swrc_model == "ConstantSoil" || soil.water.swrc_model == "LinearSoil"
+                continue
+            
             else
                 error("""
                 SWRC Validation Error: '$soil_name' has unknown SWRC model: '$(soil.water.swrc_model)'
                 
-                Valid SWRC models are:
+                Valid SWRC models are (case-insensitive, spaces or underscores accepted):
                 - "None"
                 - "Van_Genuchten"
                 - "Cavalcante"
+                - "ConstantSoil"
+                - "LinearSoil"
                 """)
             end
         end
@@ -586,6 +608,10 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                     swrc_params["n_param"] = soil.water.swrc_vg_n
                 elseif soil.water.swrc_model == "Cavalcante"
                     swrc_params["delta"] = soil.water.swrc_cav_delta
+                elseif soil.water.swrc_model == "ConstantSoil"
+                    # ConstantSoil uses K_val directly instead of K_sat FOR VERIFICATION PURPOSES ONLY - this allows testing of the Richards solver with a simple constant K model without needing to specify intrinsic permeability and rely on the K_sat computation
+                    swrc_params["K_val"] = soil.water.K_val
+                    swrc_params["h_min"] = soil.water.h_min
                 end
                 
                 # Create SWRC model struct instance with updated K_sat (option: add directional K_s_x, K_s_y)
