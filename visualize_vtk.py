@@ -298,16 +298,8 @@ class ADSIMVTKVisualizer:
         ax.plot(positions[sort_idx], field_data[sort_idx], "o-", linewidth=2, markersize=4)
         ax.set_xlabel("Position (m)")
         ax.set_ylabel(self.current_field)
-        ax.set_title(
-            f"{self.current_project}: {self.current_field} "
-            f"(Step {time_info['timestep']}, t={time_info['time']:.3e})"
-        )
+        ax.set_title(f"{self.current_project}: {self.current_field}")
         ax.grid(True, alpha=0.3)
-
-        # Add statistics
-        stats_text = f"min={field_data.min():.3e}\nmax={field_data.max():.3e}\nmean={field_data.mean():.3e}"
-        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, verticalalignment="top",
-                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
 
         if save_path:
             fig.savefig(save_path, bbox_inches="tight")
@@ -331,23 +323,12 @@ class ADSIMVTKVisualizer:
 
         ax_2d.set_xlabel("X (m)")
         ax_2d.set_ylabel("Y (m)")
-        ax_2d.set_title(
-            f"{self.current_project}: {self.current_field} (2D Heatmap)\n"
-            f"Step {time_info['timestep']}, t={time_info['time']:.3e}"
-        )
+        ax_2d.set_title(f"{self.current_project}: {self.current_field}")
         ax_2d.set_aspect("equal", adjustable="box")
         ax_2d.grid(True, alpha=0.2)
 
         # Colorbar
         cbar = fig.colorbar(scatter, ax=ax_2d, label=self.current_field)
-
-        # Statistics box
-        stats_text = (f"min={field_data.min():.3e}\n"
-                     f"max={field_data.max():.3e}\n"
-                     f"mean={field_data.mean():.3e}\n"
-                     f"std={field_data.std():.3e}")
-        ax_2d.text(0.02, 0.98, stats_text, transform=ax_2d.transAxes, verticalalignment="top",
-                  bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5), fontsize=8)
 
         # === RIGHT: 6 Time Snapshots of Middle Vertical Profile ===
         timestep_indices = self._get_6_timestep_indices()
@@ -365,9 +346,9 @@ class ADSIMVTKVisualizer:
         
         ax_profiles.set_xlabel(self.current_field)
         ax_profiles.set_ylabel("Vertical Position (m)")
-        ax_profiles.set_title("1D Profiles: Middle Vertical Line (6 Timesteps)")
+        ax_profiles.set_title("Vertical Profiles")
         ax_profiles.grid(True, alpha=0.3)
-        ax_profiles.legend(loc="best", fontsize=8)
+        ax_profiles.legend(loc="upper left", bbox_to_anchor=(1.05, 1), fontsize=8, frameon=True)
         
         # Reload current timestep
         self.load_timestep(self.current_timestep)
@@ -394,23 +375,12 @@ class ADSIMVTKVisualizer:
 
         ax_2d.set_xlabel("Radius r (m)")
         ax_2d.set_ylabel("Depth z (m)")
-        ax_2d.set_title(
-            f"{self.current_project}: {self.current_field} (Axisymmetric Heatmap)\n"
-            f"Step {time_info['timestep']}, t={time_info['time']:.3e}"
-        )
+        ax_2d.set_title(f"{self.current_project}: {self.current_field}")
         ax_2d.set_aspect("equal", adjustable="box")
         ax_2d.grid(True, alpha=0.2)
 
         # Colorbar
         cbar = fig.colorbar(scatter, ax=ax_2d, label=self.current_field)
-
-        # Statistics
-        stats_text = (f"min={field_data.min():.3e}\n"
-                     f"max={field_data.max():.3e}\n"
-                     f"mean={field_data.mean():.3e}\n"
-                     f"std={field_data.std():.3e}")
-        ax_2d.text(0.02, 0.98, stats_text, transform=ax_2d.transAxes, verticalalignment="top",
-                  bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5), fontsize=8)
 
         # === RIGHT: 6 Time Snapshots of Middle Vertical Profile ===
         timestep_indices = self._get_6_timestep_indices()
@@ -428,9 +398,9 @@ class ADSIMVTKVisualizer:
         
         ax_profiles.set_xlabel(self.current_field)
         ax_profiles.set_ylabel("Depth z (m)")
-        ax_profiles.set_title("1D Profiles: Center Vertical Line (6 Timesteps)")
+        ax_profiles.set_title("Vertical Profiles")
         ax_profiles.grid(True, alpha=0.3)
-        ax_profiles.legend(loc="best", fontsize=8)
+        ax_profiles.legend(loc="upper left", bbox_to_anchor=(1.05, 1), fontsize=8, frameon=True)
         
         # Reload current timestep
         self.load_timestep(self.current_timestep)
