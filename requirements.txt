@@ -1,0 +1,7 @@
+# ADSIM VTK Visualization Requirements
+# Install with: pip install -r requirements.txt
+
+pyvista>=0.43.0        # VTK visualization library
+numpy>=1.21.0          # Numerical computing
+matplotlib>=3.5.0      # 2D plotting library
+vtk>=9.2.0             # Visualization Toolkit (backend for pyvista)
