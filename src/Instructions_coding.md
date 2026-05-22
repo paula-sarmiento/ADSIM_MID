@@ -79,31 +79,32 @@ Finally, the code multiplies this minimum by the Courant number $C_N$ given in t
 
 ADSIM uses an isoparametric shape function formulation. At this time, the only element type admissible are 4-noded quad elements. 
 
-Below are common expression for the 4-noded isoparametric element:
+The ADSIM implementation uses a cyclic ordering where array indices [1,2,3,4] store shape functions for nodes [2,3,4,1]. Below are the expressions as implemented:
 $$
 \begin{align}
 \boldsymbol{N}(\xi, \eta)=& \begin{cases}
- \frac{1}{4}(1 - \xi)(1 - \eta) \\
- \frac{1}{4}(1 + \xi)(1 - \eta) \\
- \frac{1}{4}(1 + \xi)(1 + \eta) \\
- \frac{1}{4}(1 - \xi)(1 + \eta) 
-\end{cases}
+ \text{N[1]} = \frac{1}{4}(1 + \xi)(1 - \eta)  & \text{(Node 2)} \\
+ \text{N[2]} = \frac{1}{4}(1 + \xi)(1 + \eta)  & \text{(Node 3)} \\
+ \text{N[3]} = \frac{1}{4}(1 - \xi)(1 + \eta)  & \text{(Node 4)} \\
+ \text{N[4]} = \frac{1}{4}(1 - \xi)(1 - \eta)  & \text{(Node 1)}
+ \end{cases}
 \end{align}
 $$
 
-Based on this, the derivatives of shape functions in isoparametric space are:
+The derivatives of shape functions in isoparametric space (same cyclic ordering):
 
 $$
 \begin{align}
 \boldsymbol{B}(\xi, \eta)=& \begin{cases}
- -\frac{1}{4}(1 - \eta)&,   -\frac{1}{4}(1 - \xi)\\
- \frac{1}{4}(1 - \eta)&,  -\frac{1}{4}(1 + \xi)\\
- \frac{1}{4}(1 + \eta)&,  \frac{1}{4}(1 + \xi)\\
- -\frac{1}{4}(1 + \eta)& , 
-  \frac{1}{4}(1 - \xi)
-\end{cases}
+ \text{B[1,:]} : \frac{1}{4}(1 - \eta)&,  -\frac{1}{4}(1 + \xi)  & \text{(Node 2)} \\
+ \text{B[2,:]} : \frac{1}{4}(1 + \eta)&,  \frac{1}{4}(1 + \xi)   & \text{(Node 3)} \\
+ \text{B[3,:]} : -\frac{1}{4}(1 + \eta)& ,  \frac{1}{4}(1 - \xi)  & \text{(Node 4)} \\
+ \text{B[4,:]} : -\frac{1}{4}(1 - \eta)&,   -\frac{1}{4}(1 - \xi) & \text{(Node 1)}
+ \end{cases}
 \end{align}
 $$
+
+**Note:** This cyclic ordering is consistent throughout the codebase: mesh reading, Jacobian computation, Richards solver cache, and gas solver. All computations account for this ordering.
 
 Thus the Jacobian of the transformation can be calcuated as:
 

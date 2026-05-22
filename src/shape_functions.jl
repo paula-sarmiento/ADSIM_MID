@@ -49,10 +49,10 @@ Compute the shape functions for a 4-noded quad element at isoparametric coordina
 - `Vector{Float64}`: Shape function values at the 4 nodes [N₁, N₂, N₃, N₄]
 
 # Shape functions
-N₁ = 1/4 * (1 - ξ) * (1 - η)
-N₂ = 1/4 * (1 + ξ) * (1 - η)
-N₃ = 1/4 * (1 + ξ) * (1 + η)
-N₄ = 1/4 * (1 - ξ) * (1 + η)
+N₁ = 1/4 * (1 - ξ) * (1 - η)   → N[4]
+N₂ = 1/4 * (1 + ξ) * (1 - η)   → N[1]
+N₃ = 1/4 * (1 + ξ) * (1 + η)   → N[2]
+N₄ = 1/4 * (1 - ξ) * (1 + η)   → N[3]
 """
 function compute_shape_functions(ξ::Float64, η::Float64)
     N = zeros(4)
@@ -74,15 +74,10 @@ in isoparametric coordinates (ξ, η).
 - `η::Float64`: Isoparametric coordinate η
 
 # Returns
-- `Matrix{Float64}`: Derivatives of shape functions [4 nodes, 2 coords]
-  - Column 1: ∂N/∂ξ for each node
-  - Column 2: ∂N/∂η for each node
+- `Matrix{Float64}`: Derivatives of shape functions [4×2] with [∂N₁, ∂N₂, ∂N₃, ∂N₄] stored at array rows [4, 1, 2, 3]
 
-# Derivatives
-∂N₁/∂ξ = -1/4 * (1 - η),  ∂N₁/∂η = -1/4 * (1 - ξ)
-∂N₂/∂ξ =  1/4 * (1 - η),  ∂N₂/∂η = -1/4 * (1 + ξ)
-∂N₃/∂ξ =  1/4 * (1 + η),  ∂N₃/∂η =  1/4 * (1 + ξ)
-∂N₄/∂ξ = -1/4 * (1 + η),  ∂N₄/∂η =  1/4 * (1 - ξ)
+# Note: Array rows [1,2,3,4] store derivatives [∂N₂, ∂N₃, ∂N₄, ∂N₁] due to cyclic ordering.
+# This ordering is consistent throughout the codebase.
 """
 function compute_shape_function_derivatives(ξ::Float64, η::Float64)
     B = zeros(4, 2)

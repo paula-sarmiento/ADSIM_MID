@@ -22,6 +22,11 @@
 
 using Printf
 
+#______________________________________________________
+# ConstantSoil verification model parameters
+#______________________________________________________
+const CONSTANT_SOIL_H_MIN = -1.0  # [m] minimum matric potential
+
 # Abstract type for dispatch
 abstract type SWRCModel end
 

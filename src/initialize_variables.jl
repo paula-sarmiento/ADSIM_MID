@@ -1021,3 +1021,154 @@ function update_water_globals!(elem_props, mesh, e_g::Vector{Float64},
         end
     end
 end
+
+
+"""
+    compute_darcy_nodes_extrapolation(h::Vector{Float64}, mesh, elem_props::Vector{ElementWaterProps}, 
+                                       cache, e_g::Vector{Float64})::Tuple{Vector{Float64}, Vector{Float64}}
+
+Compute Darcy velocity at every mesh node using Gauss-point extrapolation and nodal averaging.
+
+# Algorithm
+1. Build 4×4 extrapolation matrix E = P_C * inv(P_G) where:
+   - P_G has rows [1, ξ_p, η_p, ξ_p*η_p] for each Gauss point p
+   - P_C has rows [1, ξ_a, η_a, ξ_a*η_a] for each corner node a
+2. For each element:
+   - Compute velocity at 4 Gauss points
+   - Extrapolate to 4 corner nodes via E
+   - Accumulate contributions to global nodes
+3. Average nodal contributions by node count
+
+# Arguments
+- `h::Vector{Float64}` : Nodal pressure heads, length num_nodes
+- `mesh` : Mesh data with fields: coordinates (num_nodes×2), elements (num_elements×4), num_nodes, num_elements
+- `elem_props::Vector{ElementWaterProps}` : Element SWRC properties (one per element)
+- `cache` : RichardsCache with fields: Bp (num_elements×4×2×4), Np (4 vectors), detJ, A_e, weights
+- `e_g::Vector{Float64}` : Gravity unit vector, e.g. [0.0, -1.0]
+
+# Returns
+- `(q_x, q_y)::Tuple{Vector{Float64}, Vector{Float64}}` : Darcy velocity components at each node
+
+# Notes
+- Uses anisotropic conductivity: K_x and K_y from model dispatch
+- Velocity formula: v = -K(∇h - e_g) at Gauss points, then extrapolated to corners
+- Follows zero-allocation pattern: all buffers pre-allocated outside element loop
+"""
+function compute_darcy_nodes_extrapolation(h::Vector{Float64}, mesh, 
+                                            elem_props::Vector{ElementWaterProps}, 
+                                            cache, e_g::Vector{Float64})::Tuple{Vector{Float64}, Vector{Float64}}
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # PHASE 1: Build extrapolation matrix E = P_C * inv(P_G)
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    # Gauss point coordinates for 2×2 quadrature
+    gp = 1.0 / sqrt(3.0)  # ≈ 0.577350269
+    xi_gp = [-gp, -gp, gp, gp]
+    eta_gp = [-gp, gp, gp, -gp]
+    
+    # Corner node coordinates (reference element)
+    xi_corners = [-1.0, -1.0, 1.0, 1.0]
+    eta_corners = [-1.0, 1.0, 1.0, -1.0]
+    
+    # Build P_G matrix: [1, ξ, η, ξ*η] for each Gauss point
+    P_G = zeros(4, 4)
+    for p in 1:4
+        P_G[p, 1] = 1.0
+        P_G[p, 2] = xi_gp[p]
+        P_G[p, 3] = eta_gp[p]
+        P_G[p, 4] = xi_gp[p] * eta_gp[p]
+    end
+    
+    # Build P_C matrix: [1, ξ, η, ξ*η] for each corner
+    P_C = zeros(4, 4)
+    for a in 1:4
+        P_C[a, 1] = 1.0
+        P_C[a, 2] = xi_corners[a]
+        P_C[a, 3] = eta_corners[a]
+        P_C[a, 4] = xi_corners[a] * eta_corners[a]
+    end
+    
+    # Extrapolation matrix: E = P_C * inv(P_G)
+    E = P_C * inv(P_G)
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # PHASE 2: Allocate buffers (zero-allocation pattern)
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    Nn = mesh.num_nodes
+    q_x = zeros(Float64, Nn)
+    q_y = zeros(Float64, Nn)
+    cnt = zeros(Int, Nn)
+    
+    # Pre-allocate element-local buffers
+    h_e = zeros(Float64, 4)
+    qG_x = zeros(Float64, 4)        # Velocity at Gauss points
+    qG_y = zeros(Float64, 4)
+    q_corners_x = zeros(Float64, 4) # Extrapolated velocity at corners
+    q_corners_y = zeros(Float64, 4)
+    grad_h = zeros(Float64, 2)      # Gradient [grad_h_x, grad_h_y]
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # PHASE 3: Element loop - compute velocity at Gauss points, extrapolate
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    for e in 1:mesh.num_elements
+        # Gather nodal pressure heads for this element
+        for a in 1:4
+            h_e[a] = h[mesh.elements[e, a]]
+        end
+        
+        # Get element SWRC model
+        epr = elem_props[e]
+        
+        # Compute velocity at each Gauss point
+        for p in 1:4
+            # Interpolate pressure head at Gauss point p
+            h_p = dot(cache.Np[p], h_e)
+            
+            # Get anisotropic hydraulic conductivity
+            K_p_x = K_h_x(epr.model, h_p)
+            K_p_y = K_h_y(epr.model, h_p)
+            
+            # Compute gradient via shape function derivatives
+            # grad_h_x = sum(∂N_a/∂x * h_e[a])
+            # grad_h_y = sum(∂N_a/∂y * h_e[a])
+            grad_h[1] = 0.0
+            grad_h[2] = 0.0
+            for a in 1:4
+                grad_h[1] += cache.Bp[e, p, 1, a] * h_e[a]
+                grad_h[2] += cache.Bp[e, p, 2, a] * h_e[a]
+            end
+            
+            # Compute Darcy velocity at Gauss point: v = -K(∇h - e_g)
+            qG_x[p] = -K_p_x * (grad_h[1] - e_g[1])
+            qG_y[p] = -K_p_y * (grad_h[2] - e_g[2])
+        end
+        
+        # Extrapolate from Gauss points to corner nodes
+        mul!(q_corners_x, E, qG_x)
+        mul!(q_corners_y, E, qG_y)
+        
+        # Accumulate contributions to global nodes
+        for a in 1:4
+            nid = mesh.elements[e, a]
+            q_x[nid] += q_corners_x[a]
+            q_y[nid] += q_corners_y[a]
+            cnt[nid] += 1
+        end
+    end
+    
+    # ─────────────────────────────────────────────────────────────────────────
+    # PHASE 4: Nodal averaging
+    # ─────────────────────────────────────────────────────────────────────────
+    
+    for i in 1:Nn
+        if cnt[i] > 0
+            q_x[i] /= cnt[i]
+            q_y[i] /= cnt[i]
+        end
+    end
+    
+    return q_x, q_y
+end

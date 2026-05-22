@@ -130,7 +130,7 @@ function main()
         
         theta_s = soil_props.porosity
         theta_r = soil_props.water.theta_r
-        h_min   = -soil_props.water.swrc_vg_alpha  # Repurposed for ConstantSoil
+        h_min   = CONSTANT_SOIL_H_MIN  # Use constant from swrc_models
         k_int   = soil_props.intrinsic_permeability
         rho_w   = liquid_props.density
         mu_w    = liquid_props.dynamic_viscosity
@@ -217,20 +217,28 @@ function main()
         if !checkpoint_loaded
             log_print("\n[5/8] Applying initial conditions and initializing flows")
             
-            # For ConstantSoil verification: use manual initialization (production water functions don't apply ConstantSoil IC correctly)
-            for node_id in 1:mesh.num_nodes
-                if !haskey(mesh.pressure_head_bc, node_id)
-                    h[node_id] = -0.5  # Interior nodes: initial condition
-                    theta_w[node_id] = theta(model, -0.5)
-                else
-                    h[node_id] = mesh.pressure_head_bc[node_id]  # BC nodes: pressure head BC
-                    theta_w[node_id] = theta(model, mesh.pressure_head_bc[node_id])
+            # Read ICs from mesh file for all interior nodes first
+            # Element-based IC: each element assigns its IC to all its nodes
+            for (elem_id, h_ic) in mesh.initial_pressure_head
+                element_nodes = get_element_nodes(mesh, elem_id)
+                for node_id in element_nodes
+                    if !haskey(mesh.pressure_head_bc, node_id)
+                        h[node_id] = h_ic
+                        theta_w[node_id] = theta(model, h_ic)
+                    end
                 end
             end
+            
+            # Apply BC values to boundary nodes (highest priority)
+            for (node_id, h_bc) in mesh.pressure_head_bc
+                h[node_id] = h_bc
+                theta_w[node_id] = theta(model, h_bc)
+            end
+            
             zero_flow_vectors_water!(mesh.num_nodes)
             initialize_all_flows!(mesh, materials, mesh.num_nodes, 0)
             log_print("All initial conditions and BCs applied successfully")
-            log_print("   ✓ Initial and boundary conditions applied")
+            log_print("   ✓ Initial and boundary conditions applied from mesh file")
             log_print("   ✓ Flow arrays initialized")
         else
             log_print("\n[5/8] Applying boundary conditions from mesh file")
@@ -357,6 +365,22 @@ function main()
             return zeros(N)
         end
         
+        # Extract time from VTK header line 2
+        function extract_vtk_time(filepath)
+            try
+                lines = readlines(filepath)
+                if length(lines) >= 2
+                    header = lines[2]
+                    m = match(r"Time\s*=\s*([0-9eE+.\-]+)", header)
+                    if m !== nothing
+                        return parse(Float64, m.captures[1])
+                    end
+                end
+            catch
+            end
+            return nothing
+        end
+        
         # Read all VTK files for complete history
         t_hist = Float64[]
         h_hist = Vector{Float64}[]
@@ -364,9 +388,10 @@ function main()
         for (i, vtkfile) in enumerate(vtk_files)
             filepath = joinpath(output_dir, vtkfile)
             h_recovered = parse_vtk_head(filepath)
+            t_recovered = extract_vtk_time(filepath)
             # All files should have valid data (solver wrote them)
             push!(h_hist, h_recovered)
-            push!(t_hist, (i - 1) * dt_out)  # Time based on output interval
+            push!(t_hist, t_recovered !== nothing ? t_recovered : (i - 1) * dt_out)
         end
         
         log_print(@sprintf("   ✓ Recovered %d solution snapshots from VTK files", length(h_hist)))
@@ -374,14 +399,13 @@ function main()
         # ── Post-processing: L2 errors + plots ────────────────────────
         log_print("\nPost-processing: L2 error vs. analytical solution")
 
-        Lx    = maximum(mesh.coordinates[:,1])
-        x_mid = Lx / 2.0
-        tol_x = Lx / (2 * 5)
-        col_nodes = sort(findall(i -> abs(mesh.coordinates[i,1] - x_mid) < tol_x, 1:N),
+        # Extract LEFT COLUMN (x ≈ 0) for accurate 1D comparison
+        tol_x = 1.0e-6
+        col_nodes = sort(findall(i -> mesh.coordinates[i,1] < tol_x, 1:N),
                          by = i -> mesh.coordinates[i,2])
         y_col = mesh.coordinates[col_nodes, 2]
 
-        log_print(@sprintf("   ✓ Extraction column: x ≈ %.2f m  (%d nodes)", x_mid, length(col_nodes)))
+        log_print(@sprintf("   ✓ Extraction column: x ≈ 0.0 m (LEFT BOUNDARY)  (%d nodes)", length(col_nodes)))
         log_print("-"^64)
 
         L2_errors = Float64[]

@@ -609,9 +609,10 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                 elseif soil.water.swrc_model == "Cavalcante"
                     swrc_params["delta"] = soil.water.swrc_cav_delta
                 elseif soil.water.swrc_model == "ConstantSoil"
-                    # ConstantSoil uses K_val directly instead of K_sat FOR VERIFICATION PURPOSES ONLY - this allows testing of the Richards solver with a simple constant K model without needing to specify intrinsic permeability and rely on the K_sat computation
-                    swrc_params["K_val"] = soil.water.K_val
-                    swrc_params["h_min"] = soil.water.h_min
+                    # ConstantSoil uses K_sat directly and CONSTANT_SOIL_H_MIN from swrc_models
+                    # FOR VERIFICATION PURPOSES ONLY - allows testing Richards solver with constant K model
+                    swrc_params["K_val"] = soil.water.K_sat
+                    swrc_params["h_min"] = CONSTANT_SOIL_H_MIN  # Use constant from swrc_models module
                 end
                 
                 # Create SWRC model struct instance with updated K_sat (option: add directional K_s_x, K_s_y)
