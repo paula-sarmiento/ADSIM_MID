@@ -8,6 +8,23 @@ using Base.Threads
 using LinearAlgebra
 
 #------------------------------------------------------------------------------
+# Module Dependencies
+#------------------------------------------------------------------------------
+# This module depends on the following external functions:
+# - From read_mesh.jl:
+#   * get_node_elements(mesh, node_id) → Vector{Int}
+#   * get_element_nodes(mesh, elem_id) → Vector{Int}
+#   * identify_boundary_edges(mesh) → Vector{Tuple{...}}
+#
+# Initialization order requirements:
+# 1. read_mesh.jl must be included first (provides mesh connectivity)
+# 2. initialize_variables.jl must be included for global NGases
+# 3. This module (initialize_flows.jl) should be included after both
+#
+# Note: All functions in this module assume valid mesh and material data.
+# Call initialize_all_flows!() once at simulation startup after mesh/materials loaded.
+
+#------------------------------------------------------------------------------
 # Global flow variables - shared across all modules
 #------------------------------------------------------------------------------
 
@@ -65,7 +82,7 @@ end
 # Apply boundary flow conditions
 #------------------------------------------------------------------------------
 """
-    apply_boundary_flows!(mesh::MeshData, materials)
+    apply_boundary_flows!(mesh::MeshData, NGases::Int)
 
 Apply uniform flow boundary conditions from mesh data to the global q_boundary array.
 The GID interface permits assignment of uniform steady normal flows at nodes.
@@ -77,14 +94,15 @@ For 1D boundaries:
 
 # Arguments
 - `mesh::MeshData`: Mesh data structure containing uniform flow BC data
+- `NGases::Int`: Total number of gas species
 
 # Note
 - Modifies global variable `q_boundary`
 - Flow values need to be weighted by nodal influence length
 - Flow is positive when entering the domain, negative when leaving
 """
-function apply_boundary_flows!(mesh)
-    global q_boundary, NGases    
+function apply_boundary_flows!(mesh::MeshData, NGases::Int)
+    global q_boundary    
     
     # Calculate influence length for each boundary node
     influence_lengths = calculate_boundary_influence_lengths(mesh)
@@ -99,14 +117,17 @@ function apply_boundary_flows!(mesh)
 end
 
 """
-calculate_boundary_influence_lengths(mesh::MeshData)
+calculate_boundary_influence_lengths(mesh::MeshData)::Dict{Int, Float64}
 
 Calculate the influence length for each boundary node based on connected boundary elements.
 
+# Arguments
+- `mesh::MeshData`: Mesh structure with node coordinates and connectivity
+
 # Returns
-- Dictionary mapping node_id to influence length
+- `Dict{Int, Float64}`: Dictionary mapping node_id to influence length
 """
-function calculate_boundary_influence_lengths(mesh)
+function calculate_boundary_influence_lengths(mesh::MeshData)::Dict{Int, Float64}
     influence_lengths = Dict{Int, Float64}()
     #get a list of all nodes with boundary conditions
     boundary_nodes = collect(keys(mesh.uniform_flow_bc))
@@ -137,7 +158,7 @@ end
 # Water solver boundary flow conditions
 #------------------------------------------------------------------------------
 """
-    apply_boundary_flows_water!(mesh, q_boundary_water, boundary_node_influences)
+    apply_boundary_flows_water!(mesh::MeshData, q_boundary_water::Vector{Float64}, boundary_node_influences::Dict{Int, Float64})
 
 Apply uniform flow boundary conditions for water solver to q_boundary array.
 Water boundary fluxes are read from mesh data and weighted by nodal influence lengths.
@@ -152,7 +173,7 @@ Water boundary fluxes are read from mesh data and weighted by nodal influence le
 - Water flow BC is scalar (unlike gas which is vector per gas species)
 - Flow is positive for inflow, negative for outflow [m³/(m·s)]
 """
-function apply_boundary_flows_water!(mesh, q_boundary_water::Vector{Float64}, boundary_node_influences::Dict{Int, Float64})
+function apply_boundary_flows_water!(mesh::MeshData, q_boundary_water::Vector{Float64}, boundary_node_influences::Dict{Int, Float64})
     # Apply nodal uniform flow boundary conditions for water
     for (node_id, flows) in mesh.uniform_flow_bc
         # For water solver, first element is water flux (analogous to gas solver pattern)
@@ -195,7 +216,7 @@ end
 # Initialize all flows
 #------------------------------------------------------------------------------
 """
-    initialize_all_flows!(mesh::MeshData, materials, Nnodes::Int, NGases::Int)
+    initialize_all_flows!(mesh::MeshData, materials::MaterialData, Nnodes::Int, NGases::Int)
 
 Complete flow initialization procedure. This function performs all necessary
 steps to initialize flow vectors and lumped mass matrix.
@@ -207,7 +228,7 @@ Call sequence:
 
 # Arguments
 - `mesh::MeshData`: Mesh data structure
-- `materials`: Material data structure (currently unused, reserved for future use)
+- `materials::MaterialData`: Material data structure (currently unused, reserved for future use)
 - `Nnodes::Int`: Total number of nodes in the mesh
 - `NGases::Int`: Total number of gas species
 
@@ -215,7 +236,7 @@ Call sequence:
 - Should be called once during initialization after mesh and materials are loaded
 - Precomputes boundary edge geometry (length and outward normals) for efficiency
 """
-function initialize_all_flows!(mesh, materials, Nnodes::Int, NGases::Int)
+function initialize_all_flows!(mesh::MeshData, materials::MaterialData, Nnodes::Int, NGases::Int)
     global boundary_edges
     
     zero_flow_vectors!(Nnodes, NGases)
@@ -224,7 +245,7 @@ function initialize_all_flows!(mesh, materials, Nnodes::Int, NGases::Int)
     # This is done once during initialization to avoid repeated calculation
     boundary_edges = identify_boundary_edges(mesh)
     
-    apply_boundary_flows!(mesh)
+    apply_boundary_flows!(mesh, NGases)
 end
 
 

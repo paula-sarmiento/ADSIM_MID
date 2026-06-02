@@ -81,7 +81,7 @@ Validate that checkpoint dimensions match current mesh and materials.
 # Returns
 - `(valid::Bool, message::String)`: Validation result and error/warning message
 """
-function validate_checkpoint_dimensions(checkpoint_data::Dict, mesh, materials)
+function validate_checkpoint_dimensions(checkpoint_data::Dict, mesh::MeshData, materials::MaterialData)
     
     errors = String[]
     
@@ -139,7 +139,7 @@ Load simulation state from checkpoint file and restore global variables.
   - `next_output_time::Float64`: Next output time from checkpoint
   - `message::String`: Status or error message
 """
-function load_checkpoint(checkpoint_file::String, mesh, materials)
+function load_checkpoint(checkpoint_file::String, mesh::MeshData, materials::MaterialData)
     
     if !isfile(checkpoint_file)
         return (success=false, current_time=0.0, output_counter=0, 

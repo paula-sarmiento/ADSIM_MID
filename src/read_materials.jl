@@ -725,7 +725,7 @@ Falls back to first soil if no material assignment exists.
 # Returns
 - `ElementWaterProps`: Packaged water properties for this element
 """
-function get_element_water_props(mesh, materials, elem_id::Int) :: ElementWaterProps
+function get_element_water_props(mesh::MeshData, materials::MaterialData, elem_id::Int)::ElementWaterProps
     mat_idx = get_element_material(mesh, elem_id)
 
     soil_name = materials.soil_dictionary[mat_idx]
@@ -753,7 +753,7 @@ Called once before the time loop to avoid repeated dictionary lookups during ass
 # Returns
 - `Vector{ElementWaterProps}`: One entry per element
 """
-function precompute_element_water_props(mesh, materials) :: Vector{ElementWaterProps}
+function precompute_element_water_props(mesh::MeshData, materials::MaterialData)::Vector{ElementWaterProps}
     return [get_element_water_props(mesh, materials, e) for e in 1:mesh.num_elements]
 end
 

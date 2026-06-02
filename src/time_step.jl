@@ -38,7 +38,7 @@ end
 
 
 """
-    calculate_element_characteristic_length(mesh::MeshData, elem_id::Int) -> Float64
+    calculate_element_characteristic_length(mesh::MeshData, elem_id::Int)::Float64
 
 Calculate the characteristic length of a quadrilateral element.
 Uses the minimum distance between opposite sides of the element.
@@ -55,7 +55,7 @@ For a quadrilateral element, h is computed as the minimum of:
 - Distance between midpoints of sides 1-2 and 3-4
 - Distance between midpoints of sides 2-3 and 4-1
 """
-function calculate_element_characteristic_length(mesh, elem_id::Int)
+function calculate_element_characteristic_length(mesh::MeshData, elem_id::Int)::Float64
     # Get the four nodes of the element
     nodes = mesh.elements[elem_id, :]
     
@@ -92,7 +92,7 @@ end
 
 
 """
-    find_minimum_characteristic_length(mesh::MeshData) -> Float64
+    find_minimum_characteristic_length(mesh::MeshData)::Float64
 
 Find the minimum characteristic length across all elements in the mesh.
 
@@ -102,7 +102,7 @@ Find the minimum characteristic length across all elements in the mesh.
 # Returns
 - `Float64`: Minimum characteristic length h_min [m]
 """
-function find_minimum_characteristic_length(mesh)
+function find_minimum_characteristic_length(mesh::MeshData)::Float64
     h_min = Inf
     
     for elem_id in 1:mesh.num_elements
@@ -180,7 +180,7 @@ end
 
 
 """
-    get_maximum_diffusion_coefficient(materials) -> Float64
+    get_maximum_diffusion_coefficient(materials::MaterialData)::Float64
 
 Get the maximum diffusion coefficient among all gases.
 
@@ -190,7 +190,7 @@ Get the maximum diffusion coefficient among all gases.
 # Returns
 - `Float64`: Maximum diffusion coefficient D_max [m²/s]
 """
-function get_maximum_diffusion_coefficient(materials)
+function get_maximum_diffusion_coefficient(materials::MaterialData)::Float64
     D_max = 0.0
     
     for gas_name in materials.gas_dictionary
@@ -203,7 +203,7 @@ end
 
 
 """
-    get_minimum_gas_viscosity(materials) -> Float64
+    get_minimum_gas_viscosity(materials::MaterialData)::Float64
 
 Get the minimum dynamic viscosity among all gases.
 
@@ -213,7 +213,7 @@ Get the minimum dynamic viscosity among all gases.
 # Returns
 - `Float64`: Minimum gas dynamic viscosity μ_g [Pa·s]
 """
-function get_minimum_gas_viscosity(materials)
+function get_minimum_gas_viscosity(materials::MaterialData)::Float64
     μ_min = Inf
     
     for gas_name in materials.gas_dictionary
@@ -226,7 +226,7 @@ end
 
 
 """
-    get_maximum_initial_concentration(mesh::MeshData, NGases::Int) -> Float64
+    get_maximum_initial_concentration(mesh::MeshData, NGases::Int)::Float64
 
 Get the maximum initial gas concentration across all elements and gases.
 
@@ -237,7 +237,7 @@ Get the maximum initial gas concentration across all elements and gases.
 # Returns
 - `Float64`: Maximum initial concentration C_g^i [mol/m³]
 """
-function get_maximum_initial_concentration(mesh, NGases::Int)
+function get_maximum_initial_concentration(mesh::MeshData, NGases::Int)::Float64
     C_max = 0.0
     
     for (elem_id, concentrations) in mesh.initial_concentrations
@@ -251,7 +251,7 @@ end
 
 
 """
-    get_maximum_co2_concentration(mesh::MeshData, materials) -> Float64
+    get_maximum_co2_concentration(mesh::MeshData, materials::MaterialData)::Float64
 
 Get the maximum CO2 concentration from initial conditions.
 Assumes CO2 is one of the gases in the gas dictionary.
@@ -263,7 +263,7 @@ Assumes CO2 is one of the gases in the gas dictionary.
 # Returns
 - `Float64`: Maximum CO2 concentration C_CO2_max [mol/m³]
 """
-function get_maximum_co2_concentration(mesh, materials)
+function get_maximum_co2_concentration(mesh::MeshData, materials::MaterialData)::Float64
     # Find CO2 index in gas dictionary
     co2_idx = 0
     for (idx, gas_name) in enumerate(materials.gas_dictionary)
@@ -289,7 +289,7 @@ end
 
 
 """
-    get_minimum_permeability_ratio(mesh::MeshData, materials, T_ref::Float64) -> Float64
+    get_minimum_permeability_ratio(mesh::MeshData, materials::MaterialData, T_ref::Float64)::Float64
 
 Get the minimum value of (μ_g / (C_g^i × K × T × R)) across all elements.
 This is needed for the advective time scale calculation.
@@ -305,8 +305,7 @@ This is needed for the advective time scale calculation.
 # Note
 Uses universal gas constant R = 8.314 J/(mol·K)
 """
-function get_minimum_permeability_ratio(mesh, materials, T_ref::Float64)
-    R = 8.314  # Universal gas constant [J/(mol·K)]
+function get_minimum_permeability_ratio(mesh::MeshData, materials::MaterialData, T_ref::Float64)::Float64
     ratio_min = Inf
     
     # Get minimum gas viscosity
@@ -341,7 +340,7 @@ end
 
 
 """
-    get_maximum_reaction_parameters(mesh::MeshData, materials, C_co2_max::Float64) -> Float64
+    get_maximum_reaction_parameters(mesh::MeshData, materials::MaterialData, C_co2_max::Float64)::Float64
 
 Get the maximum value of (κ × θ_w × C_CO2_max) for the reactive time scale.
 
@@ -353,7 +352,7 @@ Get the maximum value of (κ × θ_w × C_CO2_max) for the reactive time scale.
 # Returns
 - `Float64`: Maximum reaction parameter [1/s]
 """
-function get_maximum_reaction_parameters(mesh, materials, C_co2_max::Float64)
+function get_maximum_reaction_parameters(mesh::MeshData, materials::MaterialData, C_co2_max::Float64)::Float64
     param_max = 0.0
     
     # Loop through all elements
@@ -382,7 +381,7 @@ end
 
 
 """
-    get_minimum_gas_volume_fraction(materials) -> Float64
+    get_minimum_gas_volume_fraction(materials::MaterialData)::Float64
 
 Get the minimum gas volume fraction θ_g = n - θ_w across all soils.
 
@@ -392,7 +391,7 @@ Get the minimum gas volume fraction θ_g = n - θ_w across all soils.
 # Returns
 - `Float64`: Minimum gas volume fraction θ_g [-]
 """
-function get_minimum_gas_volume_fraction(materials)
+function get_minimum_gas_volume_fraction(materials::MaterialData)::Float64
     θ_g_min = Inf
     
     for soil_name in materials.soil_dictionary
@@ -409,7 +408,7 @@ end
 
 
 """
-    calculate_critical_time_step(mesh::MeshData, materials, calc_params::Dict, T_ref::Float64) -> Tuple{Float64, String}
+    calculate_critical_time_step(mesh::MeshData, materials::MaterialData, calc_params::Dict, T_ref::Float64)::Tuple{Float64, String}
 
 Calculate the critical time step based on simulation type and stability criteria.
 
@@ -439,7 +438,7 @@ For coupled simulations, compute minimum of three stability criteria:
 # Returns
 - `Tuple{Float64, String}`: (Critical time step [s], limiting scale description)
 """
-function calculate_critical_time_step(mesh, materials, calc_params::Dict, T_ref::Float64)
+function calculate_critical_time_step(mesh::MeshData, materials::MaterialData, calc_params::Dict, T_ref::Float64)::Tuple{Float64, String}
     # Check if this is water-flow-only case (Richards equation, no transport/reaction)
     solver_settings = get(calc_params, "solver_settings", Dict())
     water_flow = get(solver_settings, "water_flow", 0)
@@ -526,7 +525,7 @@ end
 
 
 """
-    calculate_time_step_info(mesh::MeshData, materials, calc_params::Dict) -> TimeStepData
+    calculate_time_step_info(mesh::MeshData, materials::MaterialData, calc_params::Dict)::TimeStepData
 
 Calculate all time stepping information for the simulation.
 
@@ -546,7 +545,7 @@ println("Actual time step: ", time_info.actual_dt, " s")
 println("Number of steps: ", time_info.num_steps)
 ```
 """
-function calculate_time_step_info(mesh, materials, calc_params::Dict)
+function calculate_time_step_info(mesh::MeshData, materials::MaterialData, calc_params::Dict)::TimeStepData
     time_data = TimeStepData()
     
     # Get reference temperature from initial conditions (use maximum temperature)

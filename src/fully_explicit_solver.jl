@@ -13,17 +13,17 @@
 using Statistics
 
 """
-    heaviside(x)
+    heaviside(x::Float64)::Float64
 
 Heaviside step function: returns 0 for x < 0, and 1 for x >= 0.
 
 # Arguments
-- `x`: Input value
+- `x::Float64`: Input value
 
 # Returns
-- 0 if x < 0, 1 if x >= 0
+- `Float64`: 0 if x < 0, 1 if x >= 0
 """
-function heaviside(x)
+function heaviside(x::Float64)::Float64
     return x >= 0 ? 1.0 : 0.0
 end
 
@@ -45,21 +45,21 @@ using Printf
 using LinearAlgebra
 
 """
-assemble_lumped_mass_vector!(M::Vector{Float64}, mesh, materials)
+assemble_lumped_mass_vector!(M::Vector{Float64}, mesh::MeshData, materials::MaterialData)
 
 Assemble the lumped mass vector for all nodes.
 Mass lumping sums element contributions to nodes.
 
 # Arguments
 - `M::Vector{Float64}`: Lumped mass vector to be filled [Nnodes]
-- `mesh`: Mesh data structure
-- `materials`: Material data structure
+- `mesh::MeshData`: Mesh data structure
+- `materials::MaterialData`: Material data structure
 
 # Formula
 For each element, compute M_e = ∫ θ_g N dΩ ≈ θ_g × A_e / 4
 where θ_g is the gas volume fraction and A_e is the element area.
 """
-function assemble_lumped_mass_vector!(M::Vector{Float64}, mesh, materials)
+function assemble_lumped_mass_vector!(M::Vector{Float64}, mesh::MeshData, materials::MaterialData)
     fill!(M, 0.0)
     
     # Loop over all elements
@@ -100,12 +100,12 @@ end
 
 
 """
-assemble_element_stiffness_matrices(mesh)
+assemble_element_stiffness_matrices(mesh::MeshData)::Vector{Matrix{Float64}}
 
 Assemble and store element geometric stiffness matrices (without material properties).
 
 # Arguments
-- `mesh`: Mesh data structure
+- `mesh::MeshData`: Mesh data structure
 
 # Returns
 - `Vector{Matrix{Float64}}`: Vector of element geometric stiffness matrices [Nelements][4×4]
@@ -114,7 +114,7 @@ Assemble and store element geometric stiffness matrices (without material proper
 K_e[i,j] = ∑_p (B · J^-1)^T · (B · J^-1) det(J) W_p
 where material properties will be applied later.
 """
-function assemble_element_stiffness_matrices(mesh)
+function assemble_element_stiffness_matrices(mesh::MeshData)::Vector{Matrix{Float64}}
     Nelements = mesh.num_elements
     
     # Preallocate vector of element matrices
@@ -156,7 +156,7 @@ end
 
 
 """
-    fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, log_print)
+    fully_explicit_diffusion_solver(mesh::MeshData, materials::MaterialData, calc_params::Dict, time_data::TimeStepData, project_name::String, log_print::Function, initial_state=nothing)
 
 Main fully explicit solver for gas diffusion in porous media.
 Solves the transient diffusion equation using forward Euler time integration.
@@ -186,7 +186,7 @@ where:
 - F = diffusion flow vector = -K × C_g
 - K = stiffness matrix from diffusion term
 """
-function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data, project_name, log_print, initial_state=nothing)
+function fully_explicit_diffusion_solver(mesh::MeshData, materials::MaterialData, calc_params::Dict, time_data::TimeStepData, project_name::String, log_print::Function, initial_state=nothing)
     log_print("\n[8/8] Starting fully explicit diffusion solver")
     log_print("   Using $(Threads.nthreads()) threads for parallel execution")
 
@@ -200,8 +200,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     # Track warnings for this step
     negative_conc_warned = Dict{Int, Bool}()  # Track warnings per gas
 
-    # Universal gas constant [J/(mol·K)]
-    R = 8.314
+    # Molar mass of CaCO3 [g/mol]
     M_caco3= 100.09 #g/mol
     ρ_caco3= 2.71e6 #g/m³
     
@@ -257,7 +256,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
     total_concentration = vec(sum(C_g, dims=2))
 
     #Calculate the absolute pressure
-    P = total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
+    P = total_concentration .* GAS_CONSTANT_R .* T  # Ideal gas law: P = C_total * R * T
 
     # Initialize time tracking based on checkpoint or from scratch
     if initial_state !== nothing
@@ -384,7 +383,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                         dN_dx = B * invJ  # [4 nodes, 2 coords]
 
                         #Update diffusion flow vector ∑_p K^p * T^p *C^p * k^p_elm *C_tot * det(J) * W_p / μ_g^p 
-                        q_aux += (R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g) .* (dN_dx * dN_dx') * C_t
+                        q_aux += (GAS_CONSTANT_R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g) .* (dN_dx * dN_dx') * C_t
                     end
                     for i in 1:4 #loop nodes in element       
                         node_id = nodes[i] #global node id
@@ -433,7 +432,7 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
                             end
                         end
 
-                        #Update diffusion flow vector ∑_p R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g  * (dN_dx · g) * N_p *∑ M C_g
+                        #Update diffusion flow vector ∑_p GAS_CONSTANT_R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g  * (dN_dx · g) * N_p *∑ M C_g
                         q_aux += ( k_intrinsic * C_gp * detJ * Wp / μ_g) .* (dN_dx * g_vector) .* N_p' * ρ_g
                     end
                     for i in 1:4 #loop nodes in element       
@@ -764,8 +763,8 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
         for (node_id, partial_pressures) in mesh.partial_pressure_bc
             for gas_idx in 1:NGases
                 # Recalculate concentration to maintain constant partial pressure
-                # P_partial = C_g * R * T  =>  C_g = P_partial / (R * T)
-                C_g[node_id, gas_idx] = partial_pressures[gas_idx] / (R * T[node_id])
+                # P_partial = C_g * GAS_CONSTANT_R * T  =>  C_g = P_partial / (GAS_CONSTANT_R * T)
+                C_g[node_id, gas_idx] = partial_pressures[gas_idx] / (GAS_CONSTANT_R * T[node_id])
             end
         end
         
@@ -775,11 +774,11 @@ function fully_explicit_diffusion_solver(mesh, materials, calc_params, time_data
         #Apply total pressure boundary condition at nodes
         for node_id in keys(mesh.absolute_pressure_bc)
             # Apply fixed absolute pressure BC by setting total concentration
-            total_concentration[node_id] = mesh.absolute_pressure_bc[node_id] / (R * T[node_id])
+            total_concentration[node_id] = mesh.absolute_pressure_bc[node_id] / (GAS_CONSTANT_R * T[node_id])
         end
 
         #Update pressure using ideal gas law
-        P= total_concentration .* R .* T  # Ideal gas law: P = C_total * R * T
+        P= total_concentration .* GAS_CONSTANT_R .* T  # Ideal gas law: P = C_total * R * T
         
         # Update current time
         current_time += dt
@@ -824,19 +823,19 @@ end
 
 
 """
-    write_output_vtk(mesh, materials, step::Int, time::Float64, project_name, total_concentration)
+    write_output_vtk(mesh::MeshData, materials::MaterialData, step::Int, time::Float64, project_name::String, total_concentration::Vector{Float64})
 
 Write VTK output file for the current time step.
 
 # Arguments
-- `mesh`: Mesh data structure
-- `materials`: Material data structure
+- `mesh::MeshData`: Mesh data structure
+- `materials::MaterialData`: Material data structure
 - `step::Int`: Output file counter
 - `time::Float64`: Current simulation time
 - `project_name::String`: Name of the project for output files
-- `total_concentration`: Total gas concentration vector
+- `total_concentration::Vector{Float64}`: Total gas concentration vector
 """
-function write_output_vtk(mesh, materials, step::Int, time::Float64, project_name, total_concentration)
+function write_output_vtk(mesh::MeshData, materials::MaterialData, step::Int, time::Float64, project_name::String, total_concentration::Vector{Float64})
     output_dir = "output"
     filename = joinpath(output_dir, project_name)
     

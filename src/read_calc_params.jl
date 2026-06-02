@@ -226,7 +226,7 @@ Validate that CO2 gas is present in materials when reaction_kinetics is enabled.
 # Returns
 - `true` if validation passes
 """
-function validate_reaction_kinetics_requirements(solver_settings::Dict, materials)
+function validate_reaction_kinetics_requirements(solver_settings::Dict, materials::MaterialData)
     # Check if reaction kinetics is enabled
     if solver_settings["reaction_kinetics"] == 1
         # Check if CO2 exists in the gas dictionary
