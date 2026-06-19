@@ -480,6 +480,47 @@ function implicit_richards_solver(mesh::MeshData, materials::MaterialData, calc_
     end
     log_print("   ✓ Free-drainage bottom edges: $(length(bot_edges))")
 
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # PHASE 1: Transport Solver Setup (Decoupled One-Way)
+    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Transport solver runs AFTER Richards in each time step.
+    # Phase 1: Decoupled — k_g and C_eq are user-specified constants.
+    # Initialize theta_w_old for transport solver (frozen water content)
+    theta_w_old = similar(theta_w)
+    theta_w_old .= theta_w
+    
+    # Check if transport is enabled (future: read from config)
+    enable_transport = false  # TODO: Read from calc_params["transport_settings"]
+    
+    if enable_transport
+        global C_aq_gas  # Dissolved gas concentration [mol/m³]
+        
+        # Build transport sparsity pattern (identical to Richards mesh)
+        A_transport = build_richards_sparsity(mesh)
+        b_transport = zeros(Float64, mesh.num_nodes)
+        
+        # Initialize transport BCs (TODO: read from mesh/config)
+        P_boundary_aq = similar(P_boundary_water)          # Dirichlet mask for transport
+        mesh_partial_pressure_bc = Dict()                  # Dict of partial pressure BCs
+        
+        # TODO: apply_transport_dirichlet_bc!(mesh)
+        # TODO: apply_transport_flux_bc!(mesh)
+        n_transport_bc = count(P_boundary_aq .== 0)
+        log_print("   ✓ Transport solver initialized (decoupled, Phase 1)")
+        log_print("   ✓ Transport BC nodes marked: $n_transport_bc nodes")
+        
+        # Transport parameters (Phase 1: constant, user-specified)
+        # TODO: Read D_h from config file
+        D_h_transport = 1.0e-9                                        # m²/s, placeholder effective diffusivity
+        kg_transport = ones(Float64, mesh.num_nodes) .* 1.0e-6        # 1/s, placeholder mass transfer coefficient [1/s]
+        
+        transport_params = AqueousTransportParams(D_h=D_h_transport)
+    else
+        A_transport = nothing
+        b_transport = nothing
+        transport_params = nothing
+        log_print("   ⚠ Transport solver DISABLED (set enable_transport=true to activate)")
+    end
 
     # Time tracking
     if initial_state !== nothing
@@ -531,7 +572,30 @@ function implicit_richards_solver(mesh::MeshData, materials::MaterialData, calc_
         # Accept step
         h .= h_new
         current_time += dt_step
-        enforce_water_dirichlet_bc!(mesh, materials)
+        enforce_water_dirichlet_bc!(mesh, materials)        
+        # Save previous water content for transport solver
+        theta_w_old .= theta_w
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # PHASE 1: Transport solver step (after water flow)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # Reads globals set by update_water_globals!:
+        #   - theta_w (just updated)
+        #   - v_water (just updated)
+        # Maintains transport globals via update_transport_globals!:
+        #   - C_aq_gas (updates from transport_step!)
+        
+        if enable_transport
+            # Aqueous concentration transport (Phase 1: decoupled, no feedback)
+            # Loop over gas species and solve independent concentration transport
+            for gas_idx in 1:NGases
+                C_aq_gas[:, gas_idx] = aqueous_concentration_solver(
+                    A_transport, b_transport, mesh, cache, materials,
+                    P_boundary_aq, mesh_partial_pressure_bc,
+                    transport_params,
+                    theta_w, theta_w_old, v_water,
+                    C_aq_gas[:, gas_idx], kg_transport, dt_step, gas_idx)
+            end
+        end
 
         # Output at scheduled times and at final time
         at_output = current_time >= next_output_time - 1e-10

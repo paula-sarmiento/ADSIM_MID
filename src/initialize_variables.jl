@@ -122,11 +122,18 @@ global S_r::Vector{Float64} = Float64[]
 global P_water::Vector{Float64} = Float64[]
 global v_water::Matrix{Float64} = zeros(Float64, 0, 2)
 
+# Transport (Dissolved Gas) state — following ADSIM global machine philosophy
+global C_aq_gas::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)  # [N × NGases] aqueous concentration
+global dC_aq_dt::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)  # [N × NGases] time derivatives (Phase 2+)
+
 # Water BC masking (1 = free node, 0 = Dirichlet BC node)
 global P_boundary_water::Vector{Int} = Int[]
 
 # Water flux boundary conditions
 global q_flux_water::Vector{Float64} = Float64[]
+
+# Water content (previous time step) for transport solver decoupling
+global theta_w_old::Vector{Float64} = Float64[]  # Volumetric water content (t^n)
 
 # Time derivatives
 global dC_g_dt::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
@@ -242,6 +249,7 @@ function zero_variables!(mesh::MeshData, materials::MaterialData)
     global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt, dtheta_dt
     global h, theta_w, S_r, P_water, v_water, P_boundary_water, q_flux_water
+    global C_aq_gas, dC_aq_dt, theta_w_old
   
     # Set dimensions
     NDim = 2  # Number of spatial dimensions - TODO: generalize for 3D
@@ -288,6 +296,11 @@ function zero_variables!(mesh::MeshData, materials::MaterialData)
     # Initialize water BC mask (1 = free, 0 = BC constrained)
     P_boundary_water = ones(Int, Nnodes)
     q_flux_water = zeros(Float64, Nnodes)
+    
+    # Allocate and initialize dissolved gas transport state (Phase 1: decoupled)
+    C_aq_gas = zeros(Float64, Nnodes, NGases)           # Aqueous/dissolved concentration
+    dC_aq_dt = zeros(Float64, Nnodes, NGases)           # Time derivatives (Phase 2+)
+    theta_w_old = zeros(Float64, Nnodes)                # Volumetric water content (t^n) for transport
     
     # Mark initialization complete (guards against premature BC application)
     global _initialized

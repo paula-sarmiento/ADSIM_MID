@@ -95,6 +95,10 @@ proc ADSIM::WriteGasProperties { root } {
         set diff_coef [$gas_block selectNodes {string(value[@n="diffusion_coefficient_1"]/@v)}]
         GiD_WriteCalculationFile puts "diff_coefficient = $diff_coef"
         
+        # Henry's constant (Phase 1: BCs; Phase 2+: coupling)
+        set henry_const [$gas_block selectNodes {string(value[@n="henry_constant_"]/@v)}]
+        GiD_WriteCalculationFile puts "henry_constant = $henry_const"
+        
         GiD_WriteCalculationFile puts ""
     }
 }

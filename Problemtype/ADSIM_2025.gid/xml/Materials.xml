@@ -15,6 +15,8 @@
       <value n="molar_mass_" pn="Molar mass [M/mol]" v="0.0"/>
 
       <value n="diffusion_coefficient_1" pn="Diffusion coefficient [L^2/T]" v="0.0"/>
+      
+      <value n="henry_constant_" pn="Henry's constant [Pa·m³/mol]" v="0.0" help="Equilibrium constant for aqueous concentration: C_aq = P_partial / K_H. Phase 1: used for BCs. Phase 2+: used for coupling."/>
   </blockdata>
 </container>
 

@@ -17,15 +17,17 @@ Structure to store gas-specific properties.
 - `dynamic_viscosity::Float64`: Dynamic viscosity [Pa·s]
 - `molar_mass::Float64`: Molar mass [g/mol]
 - `diff_coefficient::Float64`: Diffusion coefficient [m²/s]
+- `henry_constant::Float64`: Henry's law constant [Pa·m³/mol] for aqueous phase equilibrium
 """
 mutable struct GasProperties
     name::String
     dynamic_viscosity::Float64
     molar_mass::Float64
     diff_coefficient::Float64
+    henry_constant::Float64
     
     function GasProperties(name::String)
-        new(name, 0.0, 0.0, 0.0)
+        new(name, 0.0, 0.0, 0.0, 0.0)
     end
 end
 
@@ -242,6 +244,7 @@ function parse_gas_properties!(materials::MaterialData, gas_data::Dict)
         gas_props.dynamic_viscosity = Float64(gas_info["dynamic_viscosity"])
         gas_props.molar_mass = Float64(gas_info["molar_mass"])
         gas_props.diff_coefficient = Float64(gas_info["diff_coefficient"])
+        gas_props.henry_constant = Float64(get(gas_info, "henry_constant", 0.0))  # Default: 0.0 (no equilibrium)
         
         materials.gases[gas_name] = gas_props
     end
