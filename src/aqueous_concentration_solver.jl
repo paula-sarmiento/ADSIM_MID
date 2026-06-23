@@ -22,7 +22,7 @@ Dirichlet BCs via Henry's Law: C_BC = P_partial / K_H
 
 """
     aqueous_concentration_element!(Aᵉ, Rᵉ, cache, e, θw_new_e, θw_old_e, 
-                                   vs_e, C_old_e, D_h, Δt)
+                                   vsᵉ_old, Cᵉ_old, D_h, Δt)
 
 Assemble local [4×4] element matrix and [4] residual with LUMPED CAPACITY MATRIX.
 Uses Backward Euler implicit discretization with Galerkin FEM (2×2 Gauss quadrature).
@@ -32,6 +32,13 @@ KEY FIX: Lumped mass matrix (diagonal only) guarantees:
   • Physical range preservation: C ∈ [0, C_max] automatically
   • Exact discrete mass conservation
 
+Key Feature: WEAK COUPLING (Phase 1 Implementation)
+  • θₗ FROZEN from previous water time step: θₗ^{n+1}_element = computed from h^{n+1} in water solver
+  • vs FROZEN from previous water time step: vs^{n}_element = velocity from water solver at time n
+  • This weak coupling avoids solving coupled water-aqueous system
+  • In Phase 2 (strong coupling): θₗ will stay frozen but vs will become vs^{n+1} (need to pass updated velocities)
+  → For Phase 2 transition: ONLY change vs_old → vs_new in call stack; structure stays identical
+
 Reference: ADSIM aqueous_concentration_usage_guide.jl — Cell T3
 
 # Arguments
@@ -40,8 +47,8 @@ Reference: ADSIM aqueous_concentration_usage_guide.jl — Cell T3
 - `cache`: Precomputed shape functions and Jacobians (includes A_e: element areas)
 - `e::Int`: Element index
 - `θw_new_e, θw_old_e::Vector{Float64}`: [4] Nodal water content at n+1, n
-- `vs_e::Matrix{Float64}`: [4×2] Nodal Darcy velocity (x, y components)
-- `C_old_e::Vector{Float64}`: [4] Nodal concentration at time n
+- `vsᵉ_old::Matrix{Float64}`: [4×2] Nodal Darcy velocity at n (FROZEN in Phase 1)
+- `Cᵉ_old::Vector{Float64}`: [4] Nodal concentration at time n
 - `D_h::Float64`: Effective diffusivity [m²/s]
 - `Δt::Float64`: Time step [s]
 """
@@ -52,8 +59,8 @@ function aqueous_concentration_element!(
     e           :: Int,
     θw_new_e    :: Vector{Float64},  # [4] nodal water content at n+1
     θw_old_e    :: Vector{Float64},  # [4] nodal water content at n
-    vs_e        :: Matrix{Float64},  # [4×2] nodal Darcy velocity
-    C_old_e     :: Vector{Float64},  # [4] nodal concentration at n
+    vsᵉ_old     :: Matrix{Float64},  # [4×2] nodal Darcy velocity at n (FROZEN)
+    Cᵉ_old      :: Vector{Float64},  # [4] nodal concentration at n
     D_h         :: Float64,           # effective diffusivity
     Δt          :: Float64            # time step
 )
@@ -76,8 +83,8 @@ function aqueous_concentration_element!(
         
         # Interpolate θ_w and v_s to Gauss point p
         θw_p_new = dot(Np, θw_new_e)  # θ_w^{n+1}(ξ_p)
-        vs_x_p = dot(Np, vs_e[:, 1])
-        vs_y_p = dot(Np, vs_e[:, 2])
+        vs_x_p = dot(Np, vsᵉ_old[:, 1])
+        vs_y_p = dot(Np, vsᵉ_old[:, 2])
         
         @inbounds for a in 1:4
             ∂Na_x = cache.Bp[e, p, 1, a]  # ∂N_a/∂x
@@ -109,13 +116,17 @@ function aqueous_concentration_element!(
     #    → Allows independent control of each node's capacity
     #    → Consistent with Richards solver approach
     #    → Guarantees diagonal dominance when K_diff has negative off-diagonals
+    #
+    #    WEAK COUPLING (Phase 1):
+    #    • θw_new_e and θw_old_e come from water solver (time-interpolated)
+    #    • Note: θw is NOT from current element!  θw^{n+1} is FROZEN from water solver
     # ─────────────────────────────────────────────────────────────────────────────
     @inbounds for a in 1:4
         # LHS diagonal: (1/Δt) * θ_w^{n+1}_a * A_e/4
         Aᵉ[a, a] += (1.0 / Δt) * θw_new_e[a] * lumped_mass_entry
         
         # RHS: (1/Δt) * θ_w^n_a * C^n_a * A_e/4  (Backward Euler time history)
-        Rᵉ[a] += (1.0 / Δt) * θw_old_e[a] * C_old_e[a] * lumped_mass_entry
+        Rᵉ[a] += (1.0 / Δt) * θw_old_e[a] * Cᵉ_old[a] * lumped_mass_entry
     end
 end
 
@@ -125,7 +136,7 @@ end
 
 """
     assemble_aqueous_concentration!(A, R, mesh, cache, D_h, θw_new, θw_old, 
-                                    vs, C_old, Δt, P_boundary_mask, C_prescribed)
+                                    vs_old, C_old, Δt, P_boundary_mask, C_prescribed)
 
 Assemble global sparse system matrix and residual with Dirichlet BCs via row-zeroing.
 Combines element assembly and BC application (direct stiffness method).
@@ -137,7 +148,7 @@ Combines element assembly and BC application (direct stiffness method).
 - `cache`: Precomputed cache (Np, Bp, detJ)
 - `D_h::Float64`: Effective diffusivity [m²/s]
 - `θw_new, θw_old::Vector{Float64}`: [N] Water content at n+1, n
-- `vs::Matrix{Float64}`: [N×2] Darcy velocity (x, y components)
+- `vs_old::Matrix{Float64}`: [N×2] Darcy velocity at n (FROZEN in Phase 1)
 - `C_old::Vector{Float64}`: [N] Concentration at time n
 - `Δt::Float64`: Time step [s]
 - `P_boundary_mask::Vector{Int}`: [N] Dirichlet mask (0=BC, 1=interior)
@@ -151,7 +162,7 @@ function assemble_aqueous_concentration!(
     D_h             :: Float64,
     θw_new          :: Vector{Float64},
     θw_old          :: Vector{Float64},
-    vs              :: Matrix{Float64},
+    vs_old          :: Matrix{Float64},
     C_old           :: Vector{Float64},
     Δt              :: Float64,
     P_boundary_mask :: Vector{Int},
@@ -176,8 +187,8 @@ function assemble_aqueous_concentration!(
         # Extract local nodal values
         θw_new_e = θw_new[nodes]
         θw_old_e = θw_old[nodes]
-        C_old_e = C_old[nodes]
-        vs_e = vs[nodes, :]  # [4×2] matrix
+        Cᵉ_old = C_old[nodes]
+        vsᵉ_old = vs_old[nodes, :]  # [4×2] matrix
         
         # Zero local arrays
         fill!(Aᵉ, 0.0)
@@ -185,8 +196,8 @@ function assemble_aqueous_concentration!(
         
         # Compute element contribution (Phase 1: no source term)
         aqueous_concentration_element!(Aᵉ, Rᵉ, cache, e,
-                                      θw_new_e, θw_old_e, vs_e,
-                                      C_old_e, D_h, Δt)
+                                      θw_new_e, θw_old_e, vsᵉ_old,
+                                      Cᵉ_old, D_h, Δt)
         
         # Scatter into global system (direct stiffness)
         for a in 1:4
@@ -226,7 +237,7 @@ end
 """
     aqueous_concentration_solver(A, R, mesh, cache, materials, 
                                  P_boundary_aq, mesh_partial_pressure_bc,
-                                 soil_idx, θw_new, θw_old, vs, C_old, Δt, gas_idx) → C_new
+                                 soil_idx, θw_new, θw_old, vs_old, C_old, Δt, gas_idx) → C_new
 
 Solve one time step of aqueous concentration transport (Backward Euler implicit).
 Applies Henry's Law BCs: C_BC = P_partial / K_H.
@@ -241,7 +252,7 @@ Applies Henry's Law BCs: C_BC = P_partial / K_H.
 - `mesh_partial_pressure_bc::Dict`: Partial pressure BC values
 - `soil_idx::Int`: Soil material index
 - `θw_new, θw_old::Vector{Float64}`: Water content at n+1, n
-- `vs::Matrix{Float64}`: [N×2] Darcy velocity (x, y components)
+- `vs_old::Matrix{Float64}`: [N×2] Darcy velocity at n (FROZEN in Phase 1)
 - `C_old::Vector{Float64}`: Concentration at time n
 - `Δt::Float64`: Time step [s]
 - `gas_idx::Int`: Gas species index
@@ -260,7 +271,7 @@ function aqueous_concentration_solver(
     soil_idx                :: Int,
     θw_new                  :: Vector{Float64},
     θw_old                  :: Vector{Float64},
-    vs                      :: Matrix{Float64},
+    vs_old                  :: Matrix{Float64},
     C_old                   :: Vector{Float64},
     Δt                      :: Float64,
     gas_idx                 :: Int;
@@ -300,7 +311,7 @@ function aqueous_concentration_solver(
     
     # Assemble + apply BCs (combined call, like Richards)
     assemble_aqueous_concentration!(A, R, mesh, cache, D_h,
-                                   θw_new, θw_old, vs, C_old, Δt,
+                                   θw_new, θw_old, vs_old, C_old, Δt,
                                    P_boundary_aq, C_prescribed)
     
     # Solve sparse linear system

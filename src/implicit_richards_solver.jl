@@ -51,33 +51,42 @@ const MIN_CONDUCTIVITY = 1e-12            # Minimum K(h) to prevent ill-conditio
 # Element matrices: lumped capacity + anisotropic stiffness
 
 """
-    element_matrices_aniso!(Aᵉ, Rᵉ, hᵉ_curr, hᵉ_prev, eprops, Δt, e_g, cache, e)
+    element_matrices_aniso!(Aᵉ, Rᵉ, hᵉ_new, hᵉ_old, eprops, Δt, e_g, cache, e)
 
 Compute element system matrix and residual for one Q4 element using Backward Euler.
 
 # Arguments
 - `Aᵉ::Matrix{Float64}`: Element matrix [4×4] (output, zeroed at start)
 - `Rᵉ::Vector{Float64}`: Element residual [4] (output, zeroed at start)
-- `hᵉ_curr::Vector{Float64}`: Current pressure head at 4 nodes
-- `hᵉ_prev::Vector{Float64}`: Previous pressure head at 4 nodes
+- `hᵉ_new::Vector{Float64}`: Current pressure head at 4 nodes [timestep n+1]
+- `hᵉ_old::Vector{Float64}`: Previous pressure head at 4 nodes [timestep n]
 - `eprops::ElementWaterProps`: Element SWRC properties
 - `Δt::Float64`: Time step
 - `e_g::Vector{Float64}`: Gravity vector [gₓ, gᵧ]
 - `cache::RichardsCache`: Precomputed shape functions, Jacobians
 - `e::Int`: Element index
 
+# Key Feature: SWRC Model Dispatch
+Conductivity K(h) is NONLINEAR and depends on current pressure head hᵉ_new.
+Uses model dispatch for K_h_x(model, hp) and K_h_y(model, hp) at each Gauss point.
+→ Requires recalculation in EACH Picard iteration (called inside picard_richards! loop)
+
+This is different from fully_explicit_solver.jl (which uses constant D_g).
+
 # Notes
 - Modified in-place for performance
 - 2×2 Gauss quadrature (4 points per element)
-- Anisotropic conductivity K = diag(Kₓ, Kᵧ) from SWRC model
+- Anisotropic conductivity K = diag(Kₓ, Kᵧ) from SWRC model dispatch
+- Capacity C_moist(h) is also nonlinear (recalculated at each Picard iteration)
 - Lumped mass for discrete mass conservation
+- Minimum conductivity clipping prevents ill-conditioning in dry regions
 - References: Celia et al. (1990)
 """
 function element_matrices_aniso!(
     Aᵉ      :: Matrix{Float64},
     Rᵉ      :: Vector{Float64},
-    hᵉ_curr :: Vector{Float64},
-    hᵉ_prev :: Vector{Float64},
+    hᵉ_new  :: Vector{Float64},
+    hᵉ_old  :: Vector{Float64},
     eprops   :: ElementWaterProps,
     Δt       :: Float64,
     e_g      :: Vector{Float64},
@@ -96,7 +105,7 @@ function element_matrices_aniso!(
         w  = wp * dJ
 
         # Interpolate h at Gauss point
-        hp = Np[1]*hᵉ_curr[1] + Np[2]*hᵉ_curr[2] + Np[3]*hᵉ_curr[3] + Np[4]*hᵉ_curr[4]
+        hp = Np[1]*hᵉ_new[1] + Np[2]*hᵉ_new[2] + Np[3]*hᵉ_new[3] + Np[4]*hᵉ_new[4]
 
         # Anisotropic conductivity directly from SWRC model dispatch
         Kx = K_h_x(model, hp)
@@ -118,10 +127,10 @@ function element_matrices_aniso!(
         end
 
         # RHS: internal flux + gravity
-        grad_h_x = cache.Bp[e,p,1,1]*hᵉ_curr[1] + cache.Bp[e,p,1,2]*hᵉ_curr[2] +
-                   cache.Bp[e,p,1,3]*hᵉ_curr[3] + cache.Bp[e,p,1,4]*hᵉ_curr[4]
-        grad_h_y = cache.Bp[e,p,2,1]*hᵉ_curr[1] + cache.Bp[e,p,2,2]*hᵉ_curr[2] +
-                   cache.Bp[e,p,2,3]*hᵉ_curr[3] + cache.Bp[e,p,2,4]*hᵉ_curr[4]
+        grad_h_x = cache.Bp[e,p,1,1]*hᵉ_new[1] + cache.Bp[e,p,1,2]*hᵉ_new[2] +
+                   cache.Bp[e,p,1,3]*hᵉ_new[3] + cache.Bp[e,p,1,4]*hᵉ_new[4]
+        grad_h_y = cache.Bp[e,p,2,1]*hᵉ_new[1] + cache.Bp[e,p,2,2]*hᵉ_new[2] +
+                   cache.Bp[e,p,2,3]*hᵉ_new[3] + cache.Bp[e,p,2,4]*hᵉ_new[4]
 
         @inbounds for a in 1:4
             Bxa = cache.Bp[e, p, 1, a]
@@ -134,11 +143,11 @@ function element_matrices_aniso!(
     # Lumped capacity (ensures discrete mass conservation)
     ML_ii = cache.A_e[e] / 4.0
     @inbounds for a in 1:4
-        Ca = C_moist(model, hᵉ_curr[a])
+        Ca = C_moist(model, hᵉ_new[a])
         Aᵉ[a, a] += Ca / Δt * ML_ii
-        θ_curr = theta(model, hᵉ_curr[a])
-        θ_prev = theta(model, hᵉ_prev[a])
-        Rᵉ[a] += -(1.0 / Δt) * ML_ii * (θ_curr - θ_prev)
+        θw_new = theta(model, hᵉ_new[a])
+        θw_old = theta(model, hᵉ_old[a])
+        Rᵉ[a] += -(1.0 / Δt) * ML_ii * (θw_new - θw_old)
     end
 
     return nothing
@@ -173,15 +182,15 @@ function build_richards_sparsity(mesh::MeshData)::SparseMatrixCSC{Float64, Int}
 end
 
 """
-    assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache)
+    assemble_richards!(A, R, h_new, h_old, mesh, elem_props, Δt, e_g, cache)
 
 Assemble global sparse system matrix A and residual vector R with boundary conditions.
 
 # Arguments
 - `A::SparseMatrixCSC`: Global sparse matrix (modified in-place)
 - `R::Vector{Float64}`: Global residual vector (modified in-place)
-- `h_curr::Vector{Float64}`: Current pressure head
-- `h_prev::Vector{Float64}`: Previous pressure head
+- `h_new::Vector{Float64}`: Current pressure head [timestep n+1]
+- `h_old::Vector{Float64}`: Previous pressure head [timestep n]
 - `mesh::MeshData`: Mesh data structure
 - `elem_props::Vector{ElementWaterProps}`: Element SWRC properties
 - `Δt::Float64`: Time step
@@ -197,8 +206,8 @@ Assemble global sparse system matrix A and residual vector R with boundary condi
 function assemble_richards!(
     A         :: SparseMatrixCSC{Float64, Int},
     R         :: Vector{Float64},
-    h_curr    :: Vector{Float64},
-    h_prev    :: Vector{Float64},
+    h_new     :: Vector{Float64},
+    h_old     :: Vector{Float64},
     mesh      :: MeshData,
     elem_props :: Vector{ElementWaterProps},
     Δt        :: Float64,
@@ -212,19 +221,19 @@ function assemble_richards!(
     Aᵉ      = zeros(Float64, 4, 4)
     Rᵉ      = zeros(Float64, 4)
     nodes    = zeros(Int, 4)
-    hᵉ_curr = zeros(Float64, 4)
-    hᵉ_prev = zeros(Float64, 4)
+    hᵉ_new = zeros(Float64, 4)
+    hᵉ_old = zeros(Float64, 4)
 
     for e in 1:mesh.num_elements
         @inbounds for a in 1:4
             nodes[a] = mesh.elements[e, a]
         end
         @inbounds for a in 1:4
-            hᵉ_curr[a] = h_curr[nodes[a]]
-            hᵉ_prev[a] = h_prev[nodes[a]]
+            hᵉ_new[a] = h_new[nodes[a]]
+            hᵉ_old[a] = h_old[nodes[a]]
         end
 
-        element_matrices_aniso!(Aᵉ, Rᵉ, hᵉ_curr, hᵉ_prev,
+        element_matrices_aniso!(Aᵉ, Rᵉ, hᵉ_new, hᵉ_old,
                                  elem_props[e], Δt, e_g, cache, e)
 
         @inbounds for a in 1:4
@@ -264,8 +273,8 @@ function assemble_richards!(
     # Free-drainage gravity flux at bottom edges
     for (ni, nj, e_idx) in bot_edges
         model_e = elem_props[e_idx].model
-        K_ni  = K_h_y(model_e, h_curr[ni])
-        K_nj  = K_h_y(model_e, h_curr[nj])
+        K_ni  = K_h_y(model_e, h_new[ni])
+        K_nj  = K_h_y(model_e, h_new[nj])
         q_bot = (K_ni + K_nj) / 2.0 * e_g[2]
         xi = mesh.coordinates[ni, 1];  yi = mesh.coordinates[ni, 2]
         xj = mesh.coordinates[nj, 1];  yj = mesh.coordinates[nj, 2]
@@ -290,13 +299,13 @@ end
 # Picard iteration solver (one time step)
 
 """
-    picard_richards!(h_curr, h_prev, mesh, elem_props, Δt, e_g, A, cache; kwargs...)
+    picard_richards!(h_new, h_old, mesh, elem_props, Δt, e_g, A, cache; kwargs...)
 
 Picard iteration solver for one time step.
 
 # Arguments
-- `h_curr::Vector{Float64}`: Current pressure head (modified in-place)
-- `h_prev::Vector{Float64}`: Previous time step pressure head
+- `h_new::Vector{Float64}`: Current pressure head [modified in-place, timestep n+1]
+- `h_old::Vector{Float64}`: Previous time step pressure head [timestep n]
 - `mesh::MeshData`: Mesh structure
 - `elem_props::Vector{ElementWaterProps}`: Element SWRC properties
 - `Δt::Float64`: Time step
@@ -311,15 +320,24 @@ Picard iteration solver for one time step.
 # Returns
 - `Tuple{Int, Vector{Float64}}`: Number of iterations, convergence history
 
+# Key Feature: Re-enforce Dirichlet BCs After Each Picard Update
+After the Picard update hᵉ_new += ωδh, we EXPLICITLY re-enforce boundary conditions.
+This is CRITICAL for convergence because:
+  1. The Picard update δh can violate Dirichlet BCs even though row-zeroing is applied
+  2. Pressure head at BC nodes must stay at prescribed values through iterations
+  3. Without re-enforce, iterative error accumulates at boundaries
+
+See line ~388 ("KEY (from Colab)" comment).
+
 # Notes
-- Solves A(h)δh = R(h) via fixed-point iteration
+- Solves A(h)δh = R(h) via fixed-point iteration  
 - K(h) and C(h) recomputed each iteration (nonlinear)
 - Backward Euler unconditionally stable (solution accepted even if max_iter reached)
 - References: Celia et al. (1990)
 """
 function picard_richards!(
-    h_curr     :: Vector{Float64},
-    h_prev     :: Vector{Float64},
+    h_new      :: Vector{Float64},
+    h_old      :: Vector{Float64},
     mesh       :: MeshData,
     elem_props :: Vector{ElementWaterProps},
     Δt         :: Float64,
@@ -341,14 +359,14 @@ function picard_richards!(
     res_history = Float64[]
 
     # Cold start: reset to previous time step and apply Dirichlet BCs
-    h_curr .= h_prev
+    h_new .= h_old
     for (i, val) in zip(dbc_nodes, dbc_vals)
-        h_curr[i] = val
+        h_new[i] = val
     end
 
     for m in 1:max_iter
         # Step 1: Assemble nonlinear system (A and R depend on current h)
-        assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache, bot_edges)
+        assemble_richards!(A, R, h_new, h_old, mesh, elem_props, Δt, e_g, cache, bot_edges)
 
         # Step 2: Solve for pressure head increments
         delta = A \ R
@@ -366,12 +384,12 @@ function picard_richards!(
         end
 
         # Step 4: Update pressure head
-        h_curr .+= ω .* delta
+        h_new .+= ω .* delta
         
         # ✅ KEY (from Colab): Re-enforce Dirichlet BCs after update
         # This ensures boundary nodes stay at prescribed values through iterations
         for (i, val) in zip(dbc_nodes, dbc_vals)
-            h_curr[i] = val
+            h_new[i] = val
         end
     end
 
