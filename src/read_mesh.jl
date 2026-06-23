@@ -42,6 +42,7 @@ mutable struct MeshData
     transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}
     volumetric_content_bc::Dict{Int, Float64}
     pressure_head_bc::Dict{Int, Float64}
+    mole_fraction_bc::Dict{Int, Vector{Float64}}
     initial_concentrations::Dict{Int, Vector{Float64}}
     initial_temperature::Dict{Int, Float64}
     initial_volumetric_content::Dict{Int, Float64}
@@ -60,6 +61,7 @@ mutable struct MeshData
             Dict{Int, Vector{Tuple{Float64, Float64}}}(),
             Dict{Int, Float64}(),
             Dict{Int, Float64}(),
+            Dict{Int, Vector{Float64}}(),
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
             Dict{Int, Float64}(),
@@ -174,6 +176,10 @@ function read_mesh_file(filename::String, materials = nothing)
             # Parse pressure head boundary conditions
             elseif line == "pressure_head_bc"
                 line_idx = parse_pressure_head_bc!(mesh, lines, line_idx + 1)
+                
+            # Parse mole fraction boundary conditions
+            elseif line == "mole_fraction_bc"
+                line_idx = parse_mole_fraction_bc!(mesh, lines, line_idx + 1)
                 
             # Parse initial concentrations
             elseif line == "initial_concentrations"
@@ -817,6 +823,44 @@ function parse_pressure_head_bc!(mesh::MeshData, lines::Vector{String}, line_idx
     
     # Skip end marker
     if strip(lines[line_idx]) == "end pressure_head_bc"
+        line_idx += 1
+    end
+    
+    return line_idx
+end
+
+
+"""
+parse_mole_fraction_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse mole fraction boundary conditions from the mesh file.
+Each line contains: node_id value
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure to populate
+- `lines::Vector{String}`: All lines from the file
+- `line_idx::Int`: Current line index
+
+# Returns
+- `Int`: Next line index to process
+"""
+function parse_mole_fraction_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    # Read counter
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+    
+    # Read boundary conditions
+    for _ in 1:counter
+        line = strip(lines[line_idx])
+        parts = split(line)
+        node_id = parse(Int, parts[1])
+        mole_fraction = parse(Float64, parts[2])
+        mesh.mole_fraction_bc[node_id] = [mole_fraction]  # Store as single-element vector
+        line_idx += 1
+    end
+    
+    # Skip end marker
+    if line_idx <= length(lines) && strip(lines[line_idx]) == "end mole_fraction_bc"
         line_idx += 1
     end
     

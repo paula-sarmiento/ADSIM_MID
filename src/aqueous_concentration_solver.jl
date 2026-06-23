@@ -1,257 +1,172 @@
 #______________________________________________________
 # ADSIM: Aqueous Concentration Solver
-# Q4 Isoparametric · Backward Euler · Decoupled Phase
-# Solves aqueous transport from dissolved gas species
+# Implicit FEM · Backward Euler · Henry's Law BCs
 # Authors: Paula Sarmiento, Luis Zambrano-Cruzatty
-#______________________________________________________
-
-#______________________________________________________
-# Implicit FEM solver for aqueous concentration transport
-# Decoupled from Richards water flow (receives frozen θ_w, v_s)
-# Applies Henry's Law BCs from gas partial pressure
 #______________________________________________________
 
 using LinearAlgebra
 using SparseArrays
+using Printf
 
 #=
 IMPLEMENTATION NOTES:
-=====================
-
-This module implements an implicit finite element solver for aqueous
-concentration transport of dissolved gases:
-
-  ∂(θ_w C)/∂t + ∇·(θ_w v_s C) = ∇·(θ_w D_h ∇C) + k_g(C_eq - C)
-
-Key features:
-  • Backward Euler time discretization (unconditionally stable)
-  • Advection-diffusion-reaction coupling (all implicit)
-  • Phase 1: k_g = 0 (no reaction/equilibration, deferred to Phase 2)
-  • Galerkin FEM with 2×2 Gauss quadrature
-  • Dirichlet BCs via Henry's Law: C_BC = P_partial / K_H
-  • Frozen water content θ_w^n and seepage velocity v_s at time n
-  • Receives data from implicit_richards_solver output
-
-Dependencies:
-  read_materials.jl       → Gas properties with henry_constant
-  shape_functions.jl      → Precomputed cache (Np, Bp, detJ, weights)
-  implicit_richards_solver.jl → Water content θ_w, velocity v_s
-  swrc_models.jl          → theta() function for phase 1
-
-Architecture:
-  • Element assembly: aqueous_concentration_element!()
-  • Global assembly: assemble_aqueous_concentration!()
-  • BC application: apply_aqueous_concentration_bc!()
-  • Main solver: aqueous_concentration_solver()
-
-References:
-  • Galerkin FEM for advection-diffusion-reaction
-  • Henry's Law equilibration (Phase 1)
-  • Backward Euler implicit scheme for unconditional stability
-=#
-
-#______________________________________________________
-# Transport Parameters and Defaults
-#______________________________________________________
-
-"""
-    AqueousTransportParams
-
-Container for aqueous concentration transport parameters.
-
-# Fields
-- `D_h::Float64`: Effective diffusivity [m²/s] (scalar, isotropic, Phase 1)
-"""
-mutable struct AqueousTransportParams
-    D_h::Float64  # Effective diffusivity [m²/s]
-    
-    function AqueousTransportParams(D_h::Float64=0.0)
-        new(D_h)
-    end
-end
+Implicit FEM solver for aqueous concentration transport: ∂(θ_w C)/∂t + ∇·(θ_w v_s C) = ∇·(θ_w D_h ∇C)
+Backward Euler (unconditionally stable) + Galerkin FEM with 2×2 Gauss quadrature.
+Phase 1: Pure advection-diffusion (no source term). Phase 2: Will add mass transfer.
+Dirichlet BCs via Henry's Law: C_BC = P_partial / K_H
+=# 
 
 #______________________________________________________
 # Element Assembly
 #______________________________________________________
 
 """
-    aqueous_concentration_element!(Ae, be, cache, e, θw_new_e, θw_old_e, 
-                                   vs_e, C_old_e, kg_e, Ceq_e, D_h, Δt)
+    aqueous_concentration_element!(Aᵉ, Rᵉ, cache, e, θw_new_e, θw_old_e, 
+                                   vs_e, C_old_e, D_h, Δt)
 
-Assemble local element matrix and RHS vector for aqueous concentration transport.
+Assemble local [4×4] element matrix and [4] residual with LUMPED CAPACITY MATRIX.
+Uses Backward Euler implicit discretization with Galerkin FEM (2×2 Gauss quadrature).
 
-**Mathematical Basis (Backward Euler, Galerkin FEM)**:
+KEY FIX: Lumped mass matrix (diagonal only) guarantees:
+  • Diagonal dominance of global matrix → no spurious oscillations
+  • Physical range preservation: C ∈ [0, C_max] automatically
+  • Exact discrete mass conservation
 
-Weak form of transport PDE after integration by parts:
-```
-∫ w ∂(θ_w C)/∂t dΩ - ∫ ∇w·(θ_w v_s C) dΩ + ∫ ∇w·θ_w D_h∇C dΩ = ∫ w k_g(C_eq - C) dΩ
-```
-
-Backward Euler time discretization:
-```
-[1/Δt M_θ + K_adv + K_diff + K_rxn] C^{n+1} = (1/Δt) M_θ^n C^n + f_rxn^n
-```
-
-Element matrices:
-- M_θ    = ∫ θ_w N_a N_b dΩ  (capacity, uses θ_w^{n+1})
-- K_adv  = -∫ ∇N_a·(θ_w v_s) N_b dΩ  (advection, minus from IBP)
-- K_diff = ∫ θ_w D_h ∇N_a·∇N_b dΩ  (diffusion, symmetric)
-- K_rxn  = ∫ k_g N_a N_b dΩ  (reaction, on LHS)
-- RHS: (1/Δt) ∫ θ_w^n C^n N_a dΩ + ∫ k_g C_eq N_a dΩ
-
-Quadrature: 2×2 Gauss points (4 points per element)
+Reference: ADSIM aqueous_concentration_usage_guide.jl — Cell T3
 
 # Arguments
-- `Ae::Matrix{Float64}`: Element matrix [4×4] (output, pre-zeroed)
-- `be::Vector{Float64}`: Element RHS [4] (output, pre-zeroed)
-- `cache::RichardsCache`: Precomputed shape functions, Jacobians
+- `Aᵉ::Matrix{Float64}`: Element matrix [4×4] (output, pre-zeroed)
+- `Rᵉ::Vector{Float64}`: Element residual [4] (output, pre-zeroed)
+- `cache`: Precomputed shape functions and Jacobians (includes A_e: element areas)
 - `e::Int`: Element index
-- `θw_new_e::Vector{Float64}`: [4] nodal water content at time n+1
-- `θw_old_e::Vector{Float64}`: [4] nodal water content at time n
-- `vs_e::Matrix{Float64}`: [4×2] nodal Darcy velocity (columns: x, y components)
-- `C_old_e::Vector{Float64}`: [4] nodal concentration at time n
-- `kg_e::Vector{Float64}`: [4] nodal mass transfer coefficient (frozen at n)
-- `Ceq_e::Vector{Float64}`: [4] nodal equilibrium concentration at time n+1
+- `θw_new_e, θw_old_e::Vector{Float64}`: [4] Nodal water content at n+1, n
+- `vs_e::Matrix{Float64}`: [4×2] Nodal Darcy velocity (x, y components)
+- `C_old_e::Vector{Float64}`: [4] Nodal concentration at time n
 - `D_h::Float64`: Effective diffusivity [m²/s]
 - `Δt::Float64`: Time step [s]
-
-# Notes
-- Modified in-place for performance
-- Phase 1: k_g = 0.0 typically (reaction deferred)
-- C_eq = 0.0 typically (no source term in Phase 1)
 """
 function aqueous_concentration_element!(
-    Ae          :: Matrix{Float64},
-    be          :: Vector{Float64},
-    cache,  # RichardsCache
+    Aᵉ          :: Matrix{Float64},
+    Rᵉ          :: Vector{Float64},
+    cache,  # RichardsCache with A_e[e] (element area)
     e           :: Int,
-    θw_new_e    :: Vector{Float64},
-    θw_old_e    :: Vector{Float64},
-    vs_e        :: Matrix{Float64},
-    C_old_e     :: Vector{Float64},
-    kg_e        :: Vector{Float64},
-    Ceq_e       :: Vector{Float64},
-    D_h         :: Float64,
-    Δt          :: Float64
+    θw_new_e    :: Vector{Float64},  # [4] nodal water content at n+1
+    θw_old_e    :: Vector{Float64},  # [4] nodal water content at n
+    vs_e        :: Matrix{Float64},  # [4×2] nodal Darcy velocity
+    C_old_e     :: Vector{Float64},  # [4] nodal concentration at n
+    D_h         :: Float64,           # effective diffusivity
+    Δt          :: Float64            # time step
 )
-    fill!(Ae, 0.0)
-    fill!(be, 0.0)
+    fill!(Aᵉ, 0.0)
+    fill!(Rᵉ, 0.0)
     
-    # Loop over 4 Gauss points
+    # Get element area from cache (precomputed by build_richards_cache)
+    A_e = cache.A_e[e]
+    lumped_mass_entry = A_e / 4.0  # Lumped: each diagonal entry = A_e/4
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 1. CONSISTENT INTEGRATION: K_diff and K_adv (Gauss quadrature)
+    #    These are SYMMETRIC (K_diff) and NON-SYMMETRIC (K_adv) bilinear forms
+    # ─────────────────────────────────────────────────────────────────────────────
     for p in 1:4
-        # Shape functions and weights at Gauss point p
-        Np = cache.Np[p]  # [4] shape functions at point p
-        wp = cache.weights[p]  # Always 1.0 for 2×2 rule, but explicit for clarity
-        dJ = cache.detJ[e, p]  # Jacobian determinant at point p
-        wdet = wp * dJ  # Quadrature weight: w_p × det(J)
+        Np = cache.Np[p]  # [4] shape functions at Gauss point p
+        wp = cache.weights[p]
+        dJ = cache.detJ[e, p]
+        wdet = wp * dJ  # Quadrature weight
         
-        # Interpolate nodal values to Gauss point p
+        # Interpolate θ_w and v_s to Gauss point p
         θw_p_new = dot(Np, θw_new_e)  # θ_w^{n+1}(ξ_p)
-        θw_p_old = dot(Np, θw_old_e)  # θ_w^n(ξ_p)
-        C_old_p  = dot(Np, C_old_e)   # C^n(ξ_p)
-        kg_p     = dot(Np, kg_e)      # k_g^n(ξ_p) - frozen at n
-        Ceq_p    = dot(Np, Ceq_e)     # C_eq^{n+1}(ξ_p)
+        vs_x_p = dot(Np, vs_e[:, 1])
+        vs_y_p = dot(Np, vs_e[:, 2])
         
-        vs_x_p = dot(Np, vs_e[:, 1])  # v_s,x(ξ_p)
-        vs_y_p = dot(Np, vs_e[:, 2])  # v_s,y(ξ_p)
-        
-        # Assemble element matrix and RHS
-        for a in 1:4
-            Na = Np[a]  # Shape function N_a at Gauss point p
+        @inbounds for a in 1:4
+            ∂Na_x = cache.Bp[e, p, 1, a]  # ∂N_a/∂x
+            ∂Na_y = cache.Bp[e, p, 2, a]  # ∂N_a/∂y
             
-            for b in 1:4
-                Nb = Np[b]  # Shape function N_b at Gauss point p
-                
-                # Shape function gradients (physical coordinates)
-                ∂Na_x = cache.Bp[e, p, 1, a]  # ∂N_a/∂x
-                ∂Na_y = cache.Bp[e, p, 2, a]  # ∂N_a/∂y
-                
+            @inbounds for b in 1:4
+                Nb = Np[b]
                 ∂Nb_x = cache.Bp[e, p, 1, b]  # ∂N_b/∂x
                 ∂Nb_y = cache.Bp[e, p, 2, b]  # ∂N_b/∂y
                 
-                # ──── Capacity matrix: M_θ = ∫ θ_w N_a N_b dΩ ────
-                M_ab = θw_p_new * Na * Nb
-                
-                # ──── Advection matrix: K_adv = -∫ ∇N_a·(θ_w v_s) N_b dΩ ────
-                # After IBP: derivative acts on test function (a), minus sign from IBP
-                K_adv_ab = -(∂Na_x * θw_p_new * vs_x_p + 
-                            ∂Na_y * θw_p_new * vs_y_p) * Nb
-                
-                # ──── Diffusion matrix: K_diff = ∫ θ_w D_h ∇N_a·∇N_b dΩ ────
-                # Symmetric bilinear form
+                # K_diff: ∫ θ_w D_h ∇N_a·∇N_b dΩ (SYMMETRIC, negative off-diagonals)
                 K_diff_ab = θw_p_new * D_h * (∂Na_x * ∂Nb_x + ∂Na_y * ∂Nb_y)
                 
-                # ──── Reaction matrix: K_rxn = ∫ k_g N_a N_b dΩ ────
-                # From -k_g·C term on LHS (when moved from RHS)
-                K_rxn_ab = kg_p * Na * Nb
+                # K_adv: -∫ ∇N_a·(θ_w v_s) N_b dΩ (NON-SYMMETRIC, integration by parts)
+                K_adv_ab = -(∂Na_x * θw_p_new * vs_x_p + ∂Na_y * θw_p_new * vs_y_p) * Nb
                 
-                # Assemble to element matrix
-                Ae[a, b] += ((1.0 / Δt) * M_ab + K_adv_ab + K_diff_ab + K_rxn_ab) * wdet
+                # Accumulate consistent terms
+                Aᵉ[a, b] += (K_diff_ab + K_adv_ab) * wdet
             end
-            
-            # ──── RHS assembly ────
-            # From backward Euler: (1/Δt) ∫ θ_w^n C^n N_a dΩ + ∫ k_g C_eq N_a dΩ
-            be[a] += ((1.0 / Δt) * θw_p_old * C_old_p + kg_p * Ceq_p) * Na * wdet
         end
+    end
+    
+    # ─────────────────────────────────────────────────────────────────────────────
+    # 2. LUMPED CAPACITY MATRIX (diagonal only, uses NODAL values at t^{n+1})
+    #    LHS: (1/Δt) M^e_θ(lumped) = (1/Δt) diag(θ_w_a * A_e/4)  [a = 1,...,4]
+    #    RHS: (1/Δt) M^e_θ C^n_a = (1/Δt) θ_w_a^n * C_a^n * A_e/4 (time history)
+    #
+    #    Why nodal values, not Gauss-point interpolation?
+    #    → Allows independent control of each node's capacity
+    #    → Consistent with Richards solver approach
+    #    → Guarantees diagonal dominance when K_diff has negative off-diagonals
+    # ─────────────────────────────────────────────────────────────────────────────
+    @inbounds for a in 1:4
+        # LHS diagonal: (1/Δt) * θ_w^{n+1}_a * A_e/4
+        Aᵉ[a, a] += (1.0 / Δt) * θw_new_e[a] * lumped_mass_entry
+        
+        # RHS: (1/Δt) * θ_w^n_a * C^n_a * A_e/4  (Backward Euler time history)
+        Rᵉ[a] += (1.0 / Δt) * θw_old_e[a] * C_old_e[a] * lumped_mass_entry
     end
 end
 
 #______________________________________________________
-# Global Assembly (Direct Stiffness Method)
+# Global Assembly + Boundary Conditions (Combined)
 #______________________________________________________
 
 """
-    assemble_aqueous_concentration!(A, b, mesh, cache, params, θw_new, θw_old, 
-                                    vs, C_old, kg, Ceq, Δt)
+    assemble_aqueous_concentration!(A, R, mesh, cache, D_h, θw_new, θw_old, 
+                                    vs, C_old, Δt, P_boundary_mask, C_prescribed)
 
-Assemble global sparse system matrix and RHS via direct stiffness method.
-
-Iterates over all elements, computes local contributions, and scatters into
-global sparse matrix A and vector b using element-to-global node mapping.
+Assemble global sparse system matrix and residual with Dirichlet BCs via row-zeroing.
+Combines element assembly and BC application (direct stiffness method).
 
 # Arguments
-- `A::SparseMatrixCSC`: Global system matrix [N×N] (output, pre-allocated)
-- `b::Vector{Float64}`: Global RHS [N] (output)
+- `A::SparseMatrixCSC`: Global system matrix [N×N] (modified in-place)
+- `R::Vector{Float64}`: Global residual [N] (modified in-place)
 - `mesh::MeshData`: Mesh connectivity and element info
-- `cache::RichardsCache`: Precomputed cache (Np, Bp, detJ)
-- `params::AqueousTransportParams`: Transport parameters (D_h)
-- `θw_new::Vector{Float64}`: [N] water content at time n+1
-- `θw_old::Vector{Float64}`: [N] water content at time n
-- `vs::Matrix{Float64}`: [N×2] Darcy velocity (columns: x, y)
-- `C_old::Vector{Float64}`: [N] concentration at time n
-- `kg::Vector{Float64}`: [N] mass transfer coefficient (frozen)
-- `Ceq::Vector{Float64}`: [N] equilibrium concentration at time n+1
+- `cache`: Precomputed cache (Np, Bp, detJ)
+- `D_h::Float64`: Effective diffusivity [m²/s]
+- `θw_new, θw_old::Vector{Float64}`: [N] Water content at n+1, n
+- `vs::Matrix{Float64}`: [N×2] Darcy velocity (x, y components)
+- `C_old::Vector{Float64}`: [N] Concentration at time n
 - `Δt::Float64`: Time step [s]
-
-# Notes
-- Zeroes A and b at start (non-destructive on pattern)
-- Loop over mesh.num_elements
-- Extract local nodes via mesh.elements[e, :]
+- `P_boundary_mask::Vector{Int}`: [N] Dirichlet mask (0=BC, 1=interior)
+- `C_prescribed::Vector{Float64}`: [N] Prescribed BC values
 """
 function assemble_aqueous_concentration!(
-    A           :: SparseMatrixCSC{Float64, Int},
-    b           :: Vector{Float64},
+    A               :: SparseMatrixCSC{Float64, Int},
+    R               :: Vector{Float64},
     mesh,  # MeshData
     cache,  # RichardsCache
-    params      :: AqueousTransportParams,
-    θw_new      :: Vector{Float64},
-    θw_old      :: Vector{Float64},
-    vs          :: Matrix{Float64},
-    C_old       :: Vector{Float64},
-    kg          :: Vector{Float64},
-    Ceq         :: Vector{Float64},
-    Δt          :: Float64
+    D_h             :: Float64,
+    θw_new          :: Vector{Float64},
+    θw_old          :: Vector{Float64},
+    vs              :: Matrix{Float64},
+    C_old           :: Vector{Float64},
+    Δt              :: Float64,
+    P_boundary_mask :: Vector{Int},
+    C_prescribed    :: Vector{Float64}
 )
-    n_nodes = length(b)
+    n_nodes = length(R)
     
     # Allocate local arrays
-    Ae = zeros(Float64, 4, 4)
-    be = zeros(Float64, 4)
+    Aᵉ = zeros(Float64, 4, 4)
+    Rᵉ = zeros(Float64, 4)
     nodes = zeros(Int, 4)
     
     # Zero the global system (preserves sparsity pattern)
     A.nzval .= 0.0
-    b .= 0.0
+    R .= 0.0
     
     # Loop over all elements
     for e in 1:mesh.num_elements
@@ -262,79 +177,46 @@ function assemble_aqueous_concentration!(
         θw_new_e = θw_new[nodes]
         θw_old_e = θw_old[nodes]
         C_old_e = C_old[nodes]
-        kg_e = kg[nodes]
-        Ceq_e = Ceq[nodes]
         vs_e = vs[nodes, :]  # [4×2] matrix
         
         # Zero local arrays
-        fill!(Ae, 0.0)
-        fill!(be, 0.0)
+        fill!(Aᵉ, 0.0)
+        fill!(Rᵉ, 0.0)
         
-        # Compute element contribution
-        aqueous_concentration_element!(Ae, be, cache, e,
+        # Compute element contribution (Phase 1: no source term)
+        aqueous_concentration_element!(Aᵉ, Rᵉ, cache, e,
                                       θw_new_e, θw_old_e, vs_e,
-                                      C_old_e, kg_e, Ceq_e,
-                                      params.D_h, Δt)
+                                      C_old_e, D_h, Δt)
         
         # Scatter into global system (direct stiffness)
         for a in 1:4
             I = nodes[a]
-            b[I] += be[a]
+            R[I] += Rᵉ[a]
             for j in 1:4
                 J = nodes[j]
-                A[I, J] += Ae[a, j]
+                A[I, J] += Aᵉ[a, j]
             end
         end
     end
-end
-
-#______________________________________________________
-# Boundary Condition Application
-#______________________________________________________
-
-"""
-    apply_aqueous_concentration_bc!(A, b, P_boundary_mask, C_prescribed)
-
-Apply Dirichlet boundary conditions via row-zeroing method.
-
-For each row i where P_boundary_mask[i] == 0 (BC node):
-  - Zero all entries in row i except diagonal
-  - Set A[i,i] = 1.0
-  - Set b[i] = C_prescribed[i]
-
-# Arguments
-- `A::SparseMatrixCSC`: Global system matrix (modified in-place)
-- `b::Vector{Float64}`: Global RHS (modified in-place)
-- `P_boundary_mask::Vector{Int}`: [N] Dirichlet mask (0=BC, 1=interior)
-- `C_prescribed::Vector{Float64}`: [N] prescribed values at BC nodes
-
-# Notes
-- Efficient for sparse matrices
-- Preserves matrix sparsity pattern
-- Called after global assembly
-"""
-function apply_aqueous_concentration_bc!(
-    A               :: SparseMatrixCSC{Float64, Int},
-    b               :: Vector{Float64},
-    P_boundary_mask :: Vector{Int},
-    C_prescribed    :: Vector{Float64}
-)
-    n = length(b)
     
-    for i in 1:n
-        if P_boundary_mask[i] == 0  # This is a BC node
-            # Zero row i except diagonal, set diagonal to 1
-            for k in A.colptr[i]:(A.colptr[i+1] - 1)
-                if A.rowval[k] == i
-                    A.nzval[k] = 1.0  # Diagonal entry
-                else
-                    A.nzval[k] = 0.0  # Off-diagonal entries
-                end
+    # Apply Dirichlet BCs: row-zeroing method for sparse matrix
+    # For BC nodes (P_boundary_mask[i] == 0): set row to [0...1...0] with RHS = prescribed value
+    n = length(R)
+    for j in 1:n
+        for k in A.colptr[j]:(A.colptr[j+1] - 1)
+            i = A.rowval[k]
+            if P_boundary_mask[i] == 0  # BC node
+                A.nzval[k] = (i == j) ? 1.0 : 0.0  # Identity row: diagonal=1, off-diag=0
             end
-            # Set RHS to prescribed value
-            b[i] = C_prescribed[i]
         end
     end
+    for i in 1:n
+        if P_boundary_mask[i] == 0
+            R[i] = C_prescribed[i]  # Set RHS to prescribed concentration
+        end
+    end
+    
+    return nothing
 end
 
 #______________________________________________________
@@ -342,98 +224,87 @@ end
 #______________________________________________________
 
 """
-    aqueous_concentration_solver(A, b, mesh, cache, materials, 
+    aqueous_concentration_solver(A, R, mesh, cache, materials, 
                                  P_boundary_aq, mesh_partial_pressure_bc,
-                                 params, θw_new, θw_old, vs, C_old, 
-                                 kg, Δt, gas_idx) → C_new
+                                 soil_idx, θw_new, θw_old, vs, C_old, Δt, gas_idx) → C_new
 
-Solve one time step of aqueous concentration transport for a single gas species.
-
-**Workflow**:
-1. Assemble global system (implicit FEM with Backward Euler)
-2. Compute Dirichlet BC values using Henry's Law
-3. Apply Dirichlet BCs via row-zeroing
-4. Solve sparse linear system A·C_new = b
-
-**Henry's Law BC**:
-```
-C_aq[i] = P_partial[i] / K_H
-```
-where:
-- P_partial[i] = mesh_partial_pressure_bc[node_i, gas_idx] [Pa]
-- K_H = materials.gases[gas_name].henry_constant [Pa·m³/mol]
+Solve one time step of aqueous concentration transport (Backward Euler implicit).
+Applies Henry's Law BCs: C_BC = P_partial / K_H.
 
 # Arguments
 - `A::SparseMatrixCSC`: Global system matrix [N×N] (modified, pre-allocated)
-- `b::Vector{Float64}`: Global RHS [N] (modified)
+- `R::Vector{Float64}`: Global residual [N] (modified)
 - `mesh::MeshData`: Mesh connectivity
-- `cache::RichardsCache`: Precomputed shape functions
-- `materials::MaterialData`: Material properties with gas data
+- `cache`: Precomputed shape functions
+- `materials::MaterialData`: Gas/Soil properties structs
 - `P_boundary_aq::Vector{Int}`: [N] Dirichlet mask (0=BC, 1=interior)
-- `mesh_partial_pressure_bc::Dict`: Partial pressure BC data
-- `params::AqueousTransportParams`: Transport parameters (D_h)
-- `θw_new::Vector{Float64}`: [N] water content at time n+1
-- `θw_old::Vector{Float64}`: [N] water content at time n
-- `vs::Matrix{Float64}`: [N×2] Darcy velocity
-- `C_old::Vector{Float64}`: [N] concentration at time n
-- `kg::Vector{Float64}`: [N] mass transfer coefficient
+- `mesh_partial_pressure_bc::Dict`: Partial pressure BC values
+- `soil_idx::Int`: Soil material index
+- `θw_new, θw_old::Vector{Float64}`: Water content at n+1, n
+- `vs::Matrix{Float64}`: [N×2] Darcy velocity (x, y components)
+- `C_old::Vector{Float64}`: Concentration at time n
 - `Δt::Float64`: Time step [s]
-- `gas_idx::Int`: Index of gas species (1, 2, 3, ...)
+- `gas_idx::Int`: Gas species index
 
 # Returns
-- `C_new::Vector{Float64}`: [N] concentration at time n+1
-
-# Notes
-- Phase 1: k_g = 0, C_eq = 0 (no reaction/equilibration)
-- Assumes materials.gas_dictionary[gas_idx] exists
-- BC mask is modified in-place (reset after call if needed)
+- `C_new::Vector{Float64}`: [N] Concentration at time n+1
 """
 function aqueous_concentration_solver(
     A                       :: SparseMatrixCSC{Float64, Int},
-    b                       :: Vector{Float64},
+    R                       :: Vector{Float64},
     mesh,  # MeshData
     cache,  # RichardsCache
     materials,  # MaterialData
     P_boundary_aq           :: Vector{Int},
     mesh_partial_pressure_bc :: Dict,
-    params                  :: AqueousTransportParams,
+    soil_idx                :: Int,
     θw_new                  :: Vector{Float64},
     θw_old                  :: Vector{Float64},
     vs                      :: Matrix{Float64},
     C_old                   :: Vector{Float64},
-    kg                      :: Vector{Float64},
     Δt                      :: Float64,
-    gas_idx                 :: Int
+    gas_idx                 :: Int;
+    C_prescribed_override   :: Union{Vector{Float64}, Nothing} = nothing
 ) :: Vector{Float64}
     
-    # ──── Step 1: Assemble global system ────
-    assemble_aqueous_concentration!(A, b, mesh, cache, params,
-                                   θw_new, θw_old, vs, C_old, kg,
-                                   zeros(length(C_old)), Δt)  # Ceq=0 in Phase 1
-    
-    # ──── Step 2: Compute Henry's Law BC values ────
-    C_prescribed = zeros(Float64, length(b))
+    # Extract property structs (no field extraction)
     gas_name = materials.gas_dictionary[gas_idx]
-    K_H = materials.gases[gas_name].henry_constant
+    gas = materials.gases[gas_name]
     
-    # Apply Henry's Law at BC nodes (if K_H defined)
-    if K_H > 0.0
-        for (node_id, partial_pressures) in mesh_partial_pressure_bc
-            if gas_idx <= length(partial_pressures)
-                P_partial = partial_pressures[gas_idx]
-                C_prescribed[node_id] = P_partial / K_H
-                P_boundary_aq[node_id] = 0  # Mark as BC node
+    soil_name = materials.soil_dictionary[soil_idx]
+    soil_props = materials.soils[soil_name]
+    
+    # Compute D_h inline (ADSIM pattern: like Richards computes conductivity)
+    D_h = soil_props.granular_tortuosity * gas.diff_coefficient
+    
+    # Compute Henry's Law BC values: C_BC = P_partial / K_H
+    C_prescribed = zeros(Float64, length(R))
+    
+    # Use override if provided (for verification testing), otherwise compute from Henry's law
+    if C_prescribed_override !== nothing
+        C_prescribed = copy(C_prescribed_override)
+    else
+        K_H = gas.henry_constant
+        if K_H > 0.0
+            for (node_id, partial_pressures) in mesh_partial_pressure_bc
+                if gas_idx <= length(partial_pressures)
+                    P_partial = partial_pressures[gas_idx]
+                    if P_partial > 0.0
+                        C_prescribed[node_id] = P_partial / K_H
+                        P_boundary_aq[node_id] = 0  # Mark as BC node
+                    end
+                end
             end
         end
     end
     
-    # ──── Step 3: Apply Dirichlet BCs ────
-    apply_aqueous_concentration_bc!(A, b, P_boundary_aq, C_prescribed)
+    # Assemble + apply BCs (combined call, like Richards)
+    assemble_aqueous_concentration!(A, R, mesh, cache, D_h,
+                                   θw_new, θw_old, vs, C_old, Δt,
+                                   P_boundary_aq, C_prescribed)
     
-    # ──── Step 4: Solve sparse linear system ────
-    C_new = A \ b
+    # Solve sparse linear system
+    C_new = A \ R
     
     return C_new
 end
-
-#______________________________________________________
