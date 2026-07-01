@@ -525,7 +525,7 @@ end
 
 
 """
-    calculate_time_step_info(mesh::MeshData, materials::MaterialData, calc_params::Dict)::TimeStepData
+    calculate_time_step_info(mesh::MeshData, materials::MaterialData, calc_params::Dict)::Tuple{TimeStepData, String}
 
 Calculate all time stepping information for the simulation.
 
@@ -535,17 +535,18 @@ Calculate all time stepping information for the simulation.
 - `calc_params::Dict`: Calculation parameters including Courant number and total time
 
 # Returns
-- `TimeStepData`: Structure containing all time step information
+- `Tuple{TimeStepData, String}`: Time step data and limiting time scale label
 
 # Example
 ```julia
-time_info = calculate_time_step_info(mesh, materials, calc_params)
+time_info, limiting_scale = calculate_time_step_info(mesh, materials, calc_params)
 println("Critical time step: ", time_info.critical_dt, " s")
 println("Actual time step: ", time_info.actual_dt, " s")
 println("Number of steps: ", time_info.num_steps)
+println("Limiting scale: ", limiting_scale)
 ```
 """
-function calculate_time_step_info(mesh::MeshData, materials::MaterialData, calc_params::Dict)::TimeStepData
+function calculate_time_step_info(mesh::MeshData, materials::MaterialData, calc_params::Dict)::Tuple{TimeStepData, String}
     time_data = TimeStepData()
     
     # Get reference temperature from initial conditions (use maximum temperature)

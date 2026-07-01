@@ -132,6 +132,9 @@ global P_boundary_water::Vector{Int} = Int[]
 # Water flux boundary conditions
 global q_flux_water::Vector{Float64} = Float64[]
 
+# Transport Neumann fluxes (nodal, per gas species)
+global q_flux_aq::Matrix{Float64} = Matrix{Float64}(undef, 0, 0)
+
 # Water content (previous time step) for transport solver decoupling
 global theta_w_old::Vector{Float64} = Float64[]  # Volumetric water content (t^n)
 
@@ -249,7 +252,7 @@ function zero_variables!(mesh::MeshData, materials::MaterialData)
     global C_lime, C_caco3, C_lime_residual, binder_content, degree_of_carbonation, Caco3_max
     global dC_g_dt, dT_dt, dC_lime_dt, dtheta_dt
     global h, theta_w, S_r, P_water, v_water, P_boundary_water, q_flux_water
-    global C_aq_gas, dC_aq_dt, theta_w_old
+    global C_aq_gas, dC_aq_dt, theta_w_old, q_flux_aq
   
     # Set dimensions
     NDim = 2  # Number of spatial dimensions - TODO: generalize for 3D
@@ -301,6 +304,7 @@ function zero_variables!(mesh::MeshData, materials::MaterialData)
     C_aq_gas = zeros(Float64, Nnodes, NGases)           # Aqueous/dissolved concentration
     dC_aq_dt = zeros(Float64, Nnodes, NGases)           # Time derivatives (Phase 2+)
     theta_w_old = zeros(Float64, Nnodes)                # Volumetric water content (t^n) for transport
+    q_flux_aq = zeros(Float64, Nnodes, NGases)          # Nodal Neumann fluxes for aqueous transport
     
     # Mark initialization complete (guards against premature BC application)
     global _initialized
@@ -742,6 +746,42 @@ function apply_water_flux_bc!(mesh)
             q_flux_water[node_id] = flux_bc
         end
     end
+end
+
+
+"""
+    apply_transport_flux_bc!(mesh)
+
+Precompute nodal Neumann fluxes for aqueous transport (all gases).
+Uses boundary-node influence lengths to convert prescribed boundary intensities
+to nodal residual contributions.
+
+# Arguments
+- `mesh`: Mesh structure with uniform_flow_bc data
+
+# Notes
+- Modifies global q_flux_aq
+"""
+function apply_transport_flux_bc!(mesh::MeshData)
+    global q_flux_aq, boundary_node_influences, NGases
+
+    fill!(q_flux_aq, 0.0)
+
+    # uniform_flow_bc follows ADSIM gas-flow indexing convention: flows[gas_idx]
+    for (node_id, flows) in mesh.uniform_flow_bc
+        if !haskey(boundary_node_influences, node_id)
+            continue
+        end
+
+        l_inf = boundary_node_influences[node_id]
+        n_gases_available = min(NGases, length(flows))
+
+        @inbounds for gas_idx in 1:n_gases_available
+            q_flux_aq[node_id, gas_idx] = flows[gas_idx] * l_inf
+        end
+    end
+
+    return nothing
 end
 
 

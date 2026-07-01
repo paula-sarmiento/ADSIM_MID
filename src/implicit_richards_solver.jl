@@ -345,6 +345,7 @@ function picard_richards!(
     A          :: SparseMatrixCSC{Float64, Int},
     cache      :: RichardsCache,
     bot_edges  :: Vector{Tuple{Int,Int,Int}};
+    log_print  :: Function = println,
     tol        :: Float64 = PICARD_TOL_DEFAULT,
     max_iter   :: Int     = PICARD_MAX_ITER_DEFAULT,
     ω          :: Float64 = PICARD_RELAXATION_DEFAULT
@@ -511,21 +512,23 @@ function implicit_richards_solver(mesh::MeshData, materials::MaterialData, calc_
     enable_transport = false  # TODO: Read from calc_params["transport_settings"]
     
     if enable_transport
-        global C_aq_gas  # Dissolved gas concentration [mol/m³]
+        global C_aq_gas, q_flux_aq  # Dissolved gas concentration [mol/m³]
         
         # Build transport sparsity pattern (identical to Richards mesh)
         A_transport = build_richards_sparsity(mesh)
         b_transport = zeros(Float64, mesh.num_nodes)
         
         # Initialize transport BCs (TODO: read from mesh/config)
-        P_boundary_aq = similar(P_boundary_water)          # Dirichlet mask for transport
+        P_boundary_aq = ones(Int, mesh.num_nodes)          # Dirichlet mask for transport
         mesh_partial_pressure_bc = Dict()                  # Dict of partial pressure BCs
         
         # TODO: apply_transport_dirichlet_bc!(mesh)
-        # TODO: apply_transport_flux_bc!(mesh)
+        apply_transport_flux_bc!(mesh)
         n_transport_bc = count(P_boundary_aq .== 0)
+        n_transport_neumann = count(q_flux_aq .!= 0.0)
         log_print("   ✓ Transport solver initialized (decoupled, Phase 1)")
         log_print("   ✓ Transport BC nodes marked: $n_transport_bc nodes")
+        log_print("   ✓ Transport Neumann nodal fluxes initialized: $n_transport_neumann entries")
         
         # Transport parameters (Phase 1: constant, user-specified)
         # TODO: Read D_h from config file
@@ -585,6 +588,7 @@ function implicit_richards_solver(mesh::MeshData, materials::MaterialData, calc_
         # Picard iteration
         n_iter, res_history = picard_richards!(h_new, h, mesh, elem_props, dt_step, e_g,
                                    A, cache, bot_edges;
+                                   log_print=log_print,
                                    tol=picard_tol, max_iter=picard_max_iter, ω=picard_relaxation)
 
         # Accept step
@@ -611,7 +615,8 @@ function implicit_richards_solver(mesh::MeshData, materials::MaterialData, calc_
                     P_boundary_aq, mesh_partial_pressure_bc,
                     transport_params,
                     theta_w, theta_w_old, v_water,
-                    C_aq_gas[:, gas_idx], kg_transport, dt_step, gas_idx)
+                    C_aq_gas[:, gas_idx], kg_transport, dt_step, gas_idx;
+                    q_flux_aq_gas=view(q_flux_aq, :, gas_idx))
             end
         end
 

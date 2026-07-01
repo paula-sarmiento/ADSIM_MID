@@ -135,8 +135,9 @@ end
 #______________________________________________________
 
 """
-    assemble_aqueous_concentration!(A, R, mesh, cache, D_h, θw_new, θw_old, 
-                                    vs_old, C_old, Δt, P_boundary_mask, C_prescribed)
+    assemble_aqueous_concentration!(A, R, mesh, cache, D_h, θw_new, θw_old,
+                                    vs_old, C_old, Δt, P_boundary_mask, C_prescribed,
+                                    q_flux_aq_gas)
 
 Assemble global sparse system matrix and residual with Dirichlet BCs via row-zeroing.
 Combines element assembly and BC application (direct stiffness method).
@@ -153,6 +154,7 @@ Combines element assembly and BC application (direct stiffness method).
 - `Δt::Float64`: Time step [s]
 - `P_boundary_mask::Vector{Int}`: [N] Dirichlet mask (0=BC, 1=interior)
 - `C_prescribed::Vector{Float64}`: [N] Prescribed BC values
+- `q_flux_aq_gas::Union{AbstractVector{Float64}, Nothing}`: [N] Nodal Neumann flux for active gas
 """
 function assemble_aqueous_concentration!(
     A               :: SparseMatrixCSC{Float64, Int},
@@ -166,7 +168,8 @@ function assemble_aqueous_concentration!(
     C_old           :: Vector{Float64},
     Δt              :: Float64,
     P_boundary_mask :: Vector{Int},
-    C_prescribed    :: Vector{Float64}
+    C_prescribed    :: Vector{Float64},
+    q_flux_aq_gas   :: Union{AbstractVector{Float64}, Nothing} = nothing
 )
     n_nodes = length(R)
     
@@ -210,6 +213,15 @@ function assemble_aqueous_concentration!(
         end
     end
     
+    # Apply Neumann BCs first: Dirichlet row-zeroing below keeps Dirichlet precedence
+    if q_flux_aq_gas !== nothing
+        @inbounds for i in 1:n_nodes
+            if P_boundary_mask[i] != 0 && q_flux_aq_gas[i] != 0.0
+                R[i] += q_flux_aq_gas[i]
+            end
+        end
+    end
+
     # Apply Dirichlet BCs: row-zeroing method for sparse matrix
     # For BC nodes (P_boundary_mask[i] == 0): set row to [0...1...0] with RHS = prescribed value
     n = length(R)
@@ -275,7 +287,8 @@ function aqueous_concentration_solver(
     C_old                   :: Vector{Float64},
     Δt                      :: Float64,
     gas_idx                 :: Int;
-    C_prescribed_override   :: Union{Vector{Float64}, Nothing} = nothing
+    C_prescribed_override   :: Union{Vector{Float64}, Nothing} = nothing,
+    q_flux_aq_gas           :: Union{AbstractVector{Float64}, Nothing} = nothing
 ) :: Vector{Float64}
     
     # Extract property structs (no field extraction)
@@ -312,7 +325,7 @@ function aqueous_concentration_solver(
     # Assemble + apply BCs (combined call, like Richards)
     assemble_aqueous_concentration!(A, R, mesh, cache, D_h,
                                    θw_new, θw_old, vs_old, C_old, Δt,
-                                   P_boundary_aq, C_prescribed)
+                                   P_boundary_aq, C_prescribed, q_flux_aq_gas)
     
     # Solve sparse linear system
     C_new = A \ R

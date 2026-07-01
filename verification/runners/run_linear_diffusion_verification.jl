@@ -22,7 +22,7 @@
 
 using LinearAlgebra, SparseArrays, Printf, Plots, Statistics, TOML, Dates
 
-const PROJECT_ROOT = @__DIR__
+const PROJECT_ROOT = dirname(dirname(@__DIR__))
 const SRC_DIR      = joinpath(PROJECT_ROOT, "src")
 
 include(joinpath(SRC_DIR, "version.jl"))
