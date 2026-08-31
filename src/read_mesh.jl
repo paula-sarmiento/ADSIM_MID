@@ -19,6 +19,7 @@ Structure to store all mesh data and associated boundary/initial conditions.
 - `absolute_pressure_bc::Dict{Int, Float64}`: Absolute pressure BC (node_id => pressure)
 - `partial_pressure_bc::Dict{Int, Vector{Float64}}`: Partial pressure BC (node_id => [P_gas1, P_gas2, ...])
 - `liquid_discharge_bc::Dict{Int, Float64}`: Liquid discharge velocity BC (node_id => discharge_velocity [m/s])
+- `free_drainage_bc::Set{Int}`: Nodes belonging to explicit free-drainage boundary edges
 - `transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}`: Transient liquid discharge (node_id => [(time, velocity), ...])
 - `volumetric_content_bc::Dict{Int, Float64}`: Volumetric content BC (node_id => volumetric_content [-])
 - `pressure_head_bc::Dict{Int, Float64}`: Pressure head BC (node_id => pressure_head [m])
@@ -39,6 +40,7 @@ mutable struct MeshData
     absolute_pressure_bc::Dict{Int, Float64}
     partial_pressure_bc::Dict{Int, Vector{Float64}}
     liquid_discharge_bc::Dict{Int, Float64}
+    free_drainage_bc::Set{Int}
     transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}
     volumetric_content_bc::Dict{Int, Float64}
     pressure_head_bc::Dict{Int, Float64}
@@ -58,6 +60,7 @@ mutable struct MeshData
             Dict{Int, Float64}(),
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
+            Set{Int}(),
             Dict{Int, Vector{Tuple{Float64, Float64}}}(),
             Dict{Int, Float64}(),
             Dict{Int, Float64}(),
@@ -164,6 +167,10 @@ function read_mesh_file(filename::String, materials = nothing)
             # Parse liquid discharge boundary conditions
             elseif line == "liquid_discharge_bc"
                 line_idx = parse_liquid_discharge_bc!(mesh, lines, line_idx + 1)
+
+            # Parse explicit free-drainage boundary nodes
+            elseif line == "free_drainage_bc"
+                line_idx = parse_free_drainage_bc!(mesh, lines, line_idx + 1)
                 
             # Parse transient liquid discharge boundary conditions
             elseif line == "transient_liquid_discharge_bc"
@@ -207,10 +214,10 @@ function read_mesh_file(filename::String, materials = nothing)
         end
     end
     
-    # Normalize water conditions if materials provided
-    if materials !== nothing
-        normalize_water_conditions!(mesh, materials)
-    end
+    # ⚠️ DELAYED: normalize_water_conditions! called AFTER compute_K_sat_runtime!
+    # This must wait until SWRC models are initialized via compute_K_sat_runtime!()
+    # in kernel.jl, otherwise soil.water.swrc_model_instance will be nothing.
+    # See kernel.jl line ~170 for the actual call.
     
     return mesh
 end
@@ -255,13 +262,13 @@ function normalize_water_conditions!(mesh::MeshData, materials)
     empty!(mesh.volumetric_content_bc)  # Clear deprecated field
     
     # Convert IC: initial_pressure_head (h) → initial_volumetric_content (θ)
-    for (elem_id, h) in mesh.initial_pressure_head
+    for (elem_id, h_val) in mesh.initial_pressure_head
         mat_idx = mesh.materials[elem_id]
         if mat_idx !== nothing && mat_idx <= length(materials.soil_dictionary)
             soil = materials.soils[materials.soil_dictionary[mat_idx]]
             if soil.water.swrc_model_instance !== nothing
-                theta = theta(soil.water.swrc_model_instance, h)
-                mesh.initial_volumetric_content[elem_id] = theta
+                theta_val = theta(soil.water.swrc_model_instance, h_val)
+                mesh.initial_volumetric_content[elem_id] = theta_val
             end
         end
     end
@@ -668,6 +675,28 @@ function parse_liquid_discharge_bc!(mesh::MeshData, lines::Vector{String}, line_
         line_idx += 1
     end
     
+    return line_idx
+end
+
+"""
+parse_free_drainage_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse the counted node list defining explicit free-drainage boundary edges.
+"""
+function parse_free_drainage_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+
+    for _ in 1:counter
+        node_id = parse(Int, strip(lines[line_idx]))
+        push!(mesh.free_drainage_bc, node_id)
+        line_idx += 1
+    end
+
+    if strip(lines[line_idx]) == "end free_drainage_bc"
+        line_idx += 1
+    end
+
     return line_idx
 end
 

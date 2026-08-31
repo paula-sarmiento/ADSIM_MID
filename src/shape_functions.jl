@@ -98,6 +98,39 @@ function compute_shape_function_derivatives(ξ::Float64, η::Float64)
 end
 
 """
+    build_q4_extrapolation_matrix() -> Matrix{Float64}
+
+Build the matrix that extrapolates values from the four 2×2 Gauss points to the
+four local Q4 nodes.
+
+# Returns
+- `Matrix{Float64}`: Extrapolation matrix mapping Gauss-point values to local nodes
+
+# Notes
+The corner order matches `compute_shape_functions`: 1=(+1,-1), 2=(+1,+1),
+3=(-1,+1), and 4=(-1,-1).
+"""
+function build_q4_extrapolation_matrix()::Matrix{Float64}
+    gp = 1.0 / sqrt(3.0)
+    xi_gp = [-gp, -gp, gp, gp]
+    eta_gp = [-gp, gp, gp, -gp]
+    # Corner node coordinates in the reference element, matching the local node
+    # numbering used by compute_shape_functions: 1=(+1,-1) SE, 2=(+1,+1) NE,
+    # 3=(-1,+1) NW, 4=(-1,-1) SW.
+    xi_corners = [1.0, 1.0, -1.0, -1.0]
+    eta_corners = [-1.0, 1.0, 1.0, -1.0]
+
+    P_G = zeros(4, 4)
+    P_C = zeros(4, 4)
+    for p in 1:4
+        P_G[p, :] = [1.0, xi_gp[p], eta_gp[p], xi_gp[p] * eta_gp[p]]
+        P_C[p, :] = [1.0, xi_corners[p], eta_corners[p],
+                     xi_corners[p] * eta_corners[p]]
+    end
+    return P_C * inv(P_G)
+end
+
+"""
     compute_jacobian(B::Matrix{Float64}, X_nodes::Matrix{Float64})
 
 Compute the Jacobian matrix for the transformation from isoparametric to physical coordinates.
@@ -121,22 +154,29 @@ function compute_jacobian(B::Matrix{Float64}, X_nodes::Matrix{Float64})
 end
 
 """
-    inverse_and_determinant(J::Matrix{Float64})
+    inverse_and_determinant(J::Matrix{Float64}; elem=nothing, gp=nothing)
 
 Compute the inverse and determinant of a 2×2 Jacobian matrix.
 
 # Arguments
 - `J::Matrix{Float64}`: Jacobian matrix [2×2]
+- `elem::Union{Int,Nothing}`: Optional element index for error context
+- `gp::Union{Int,Nothing}`: Optional Gauss point index for error context
 
 # Returns
 - `Tuple{Matrix{Float64}, Float64}`: (Inverse Jacobian [2×2], Determinant)
 """
-function inverse_and_determinant(J::Matrix{Float64})
+function inverse_and_determinant(J::Matrix{Float64};
+                                 elem::Union{Int,Nothing}=nothing,
+                                 gp::Union{Int,Nothing}=nothing)
     # For a 2x2 matrix: det(J) = J[1,1]*J[2,2] - J[1,2]*J[2,1]
     detJ = J[1, 1] * J[2, 2] - J[1, 2] * J[2, 1]
     
-    if abs(detJ) < 1e-12
-        error("Singular Jacobian detected: det(J) = $detJ")
+    if detJ < 1e-12
+        loc = (elem === nothing || gp === nothing) ? "" : " (element $elem, Gauss point $gp)"
+        error("Invalid Jacobian$loc: det(J) = $detJ. A non-positive determinant means the " *
+              "element nodes are ordered clockwise or the element is degenerate. " *
+              "ADSIM requires counter-clockwise node ordering.")
     end
     
     # Inverse of 2x2 matrix
@@ -212,12 +252,7 @@ function initialize_shape_functions!(mesh)
         # Compute Jacobian at each Gauss point
         for p in 1:4
             J = compute_jacobian(B_gauss[p], X_nodes)
-            invJ, detJ = inverse_and_determinant(J)
-            
-            # Check for degenerate elements
-            if abs(detJ) < 1e-12
-                error("Element $e, Gauss point $p: Jacobian determinant = $detJ < 1e-12. Element is degenerate or has bad geometry.")
-            end
+            invJ, detJ = inverse_and_determinant(J; elem=e, gp=p)
             
             invJ_elements[e, p, :, :] = invJ
             detJ_elements[e, p] = detJ
@@ -373,7 +408,7 @@ and reorganizes it into a format optimized for the implicit Richards solver:
 
 # Implementation Notes
 1. Retrieves shape functions using ShapeFunctions.get_*() accessors
-2. Computes ∂N/∂x and ∂N/∂y via chain rule: B_physical = B_iso * invJ
+2. Computes ∂N/∂x and ∂N/∂y via chain rule: B_physical = B_iso * transpose(invJ)
 3. Accumulates element areas via Gauss quadrature integration
 4. Organizes data for efficient element assembly during Picard iteration
 
@@ -398,15 +433,17 @@ function build_richards_cache(mesh) :: RichardsCache
             # B_iso = ∂N/∂(ξ,η) in isoparametric space [4×2]
             B_iso = ShapeFunctions.get_B(p)
             
-            # invJ = [∂(ξ,η)/∂(x,y)] computed in shape_functions.jl [2×2]
+            # invJ[i,j] = ∂ξ_j/∂x_i because J[i,j] = ∂x_j/∂ξ_i, so invJ = (A⁻¹)ᵀ [2×2]
             invJ  = ShapeFunctions.get_invJ(e, p)
             
             # dJ = det(J) at Gauss point p in element e
             dJ    = ShapeFunctions.get_detJ(e, p)
 
-            # ── Chain rule: ∂N/∂(x,y) = ∂N/∂(ξ,η) * ∂(ξ,η)/∂(x,y) ──
-            # Result: dN_dx[a, :] = [∂N_a/∂x, ∂N_a/∂y] for node a=1..4
-            dN_dx = B_iso * invJ   # [4×2]
+            # ── Chain rule: ∂N_a/∂x_i = Σ_j (∂ξ_j/∂x_i)(∂N_a/∂ξ_j) ──
+            # invJ[i,j] = ∂ξ_j/∂x_i  (because J[i,j] = ∂x_j/∂ξ_i, so invJ = (A⁻¹)ᵀ).
+            # The transpose is required: using the untransposed inverse contracts over the
+            # wrong index and is correct only when invJ is symmetric.
+            dN_dx = B_iso * transpose(invJ)   # [4×2]
             
             # ── Store in optimized format for assembly ────────────────
             for a in 1:4

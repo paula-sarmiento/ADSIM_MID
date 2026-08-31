@@ -43,6 +43,9 @@ proc ADSIM::WriteMeshFile { filename } {
     
     # Write liquid discharge boundary conditions
     ADSIM::WriteMeshDischargeVelocityBC $root
+
+    # Write free-drainage boundary conditions
+    ADSIM::WriteMeshFreeDrainageBC $root
     
     # Write transient liquid discharge boundary conditions
     ADSIM::WriteMeshTransientDischargeBC $root
@@ -320,6 +323,27 @@ proc ADSIM::WriteMeshDischargeVelocityBC { root } {
     GiD_WriteCalculationFile puts $counter
     GiD_WriteCalculationFile nodes $formats
     GiD_WriteCalculationFile puts "end liquid_discharge_bc"
+    GiD_WriteCalculationFile puts ""
+}
+
+#===============================================================================
+# Write free-drainage boundary conditions
+#===============================================================================
+proc ADSIM::WriteMeshFreeDrainageBC { root } {
+    GiD_WriteCalculationFile puts "free_drainage_bc"
+
+    set ov_type "line"
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Free_drainage"]/group[@ov=%s]} $ov_type]
+    set formats ""
+
+    foreach gNode [$root selectNodes $xp] {
+        dict set formats [$gNode @n] "%d\n"
+    }
+
+    set counter [GiD_WriteCalculationFile nodes -count $formats]
+    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile nodes $formats
+    GiD_WriteCalculationFile puts "end free_drainage_bc"
     GiD_WriteCalculationFile puts ""
 }
 

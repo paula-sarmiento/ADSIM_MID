@@ -123,7 +123,8 @@ function get_nonlinear_solver(calc_data::Dict)
     return Dict(
         "picard_tolerance" => Float64(get(nonlinear, "picard_tolerance", 1.0e-8)),
         "picard_max_iter" => Int(get(nonlinear, "picard_max_iter", 100)),
-        "picard_relaxation" => Float64(get(nonlinear, "picard_relaxation", 1.0))
+        "picard_relaxation" => Float64(get(nonlinear, "picard_relaxation", 1.0)),
+        "capacity_floor" => Float64(get(nonlinear, "capacity_floor", 1.0e-4))
     )
 end
 

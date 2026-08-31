@@ -75,6 +75,73 @@ end uniform_flow_bc
 
 Each line contains the node id within a line where the condition was applied. After this, the value of normal flow is set, but it will be recalculated in real time to consider length of elements. Eg. `2 1.0 0.0` indicates that node 2 has a flow of 0.5 $\text{mol}/\text{L}^2 \text{T}$ of gas 1 and 0.25 $\text{mol}/\text{L}^2 \text{T}$ of gas 2.
 
+## Liquid discharge boundary conditions
+
+Use the following structure:
+```
+liquid_discharge_bc
+counter
+.
+.
+.
+node_id discharge_velocity
+.
+.
+.
+end liquid_discharge_bc
+```
+
+Each entry is a nodal value of the normal water-flux **intensity** $\bar q$ in
+$\text{m}/\text{s}$, not an already integrated nodal flow. Positive values mean
+inflow into the domain; negative values mean outflow.
+
+The Richards solver identifies geometric boundary edges for which both endpoint
+nodes occur in `liquid_discharge_bc`. It linearly interpolates $\bar q$ along each
+edge and integrates the boundary term into the residual. For an edge of length
+$l_e$ with endpoint values $q_i$ and $q_j$, the consistent nodal contributions are
+
+$$
+R_i \mathrel{+}= \frac{l_e(2q_i+q_j)}{6}, \qquad
+R_j \mathrel{+}= \frac{l_e(q_i+2q_j)}{6}.
+$$
+
+For uniform flux this gives $\bar q l_e/2$ at each endpoint. Therefore the total
+applied flow is independent of boundary mesh refinement. Flux loads are assembled
+before water Dirichlet constraints are applied; contributions at constrained nodes
+are represented in the corresponding support reactions.
+
+## Free-drainage boundary conditions
+
+Free drainage is an explicit boundary switch with no prescribed magnitude. Use a
+counted node list:
+
+```
+free_drainage_bc
+counter
+.
+.
+.
+node_id
+.
+.
+.
+end free_drainage_bc
+```
+
+A geometric boundary edge receives free drainage only when both endpoint nodes
+occur in `free_drainage_bc`. For outward unit normal $\mathbf n$, gravity direction
+$\mathbf e_g$, and directional conductivities $K_x$ and $K_y$, its inward flux is
+
+$$
+q_{in} = -(K_x e_{g,x} n_x + K_y e_{g,y} n_y).
+$$
+
+Conductivity is evaluated from the current pressure head during each Picard
+iteration. On a horizontal bottom with downward gravity this reduces to
+$q_{in}=-K_y$. On a vertical face gravity is tangential and the free-drainage flux
+is zero. A boundary with no water boundary condition has the natural zero-flux
+condition; free drainage is never inferred from its position.
+
 ## Absolute pressure boundary condition
 
 Use the following structure:

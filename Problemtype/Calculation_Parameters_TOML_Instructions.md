@@ -33,6 +33,26 @@ gravity_x_component = 0.0
 gravity_y_component = -1.0
 ```
 
+For Richards water flow, `gravity_x_component` and `gravity_y_component` define
+the gravity direction used by the solver. Set both components to `0.0` to run a
+water-flow calculation without gravity.
+
+`gravity_magnitude` is a physical unit-conversion constant used to compute
+saturated hydraulic conductivity, $K_{sat}=k\rho_w g/\mu_w$, and water pressure,
+$P_w=\rho_w g h$. It must remain at the physical gravitational acceleration
+(for example, `9.81` in SI units), even when the directional components are zero.
+Setting `gravity_magnitude = 0.0` drives the computed $K_{sat}$ to zero.
+
+The `[solver] gravity` flag does not control gravity in the Richards solver. It is
+currently used only by `log_analysis_type` for the analysis banner. In particular,
+do not use `gravity = 0` under `[solver]` to infer that Richards gravity is off;
+the direction components above are authoritative.
+
+For Richards water flow, an unspecified boundary has the natural zero-flux
+condition everywhere in the domain, with no positional exceptions. Unit-gradient
+free drainage must be requested explicitly with the `free_drainage_bc` mesh block;
+an unconstrained bottom boundary is not treated as free drainage.
+
 ## Solver Settings
 
 Define the solver type for the problem.

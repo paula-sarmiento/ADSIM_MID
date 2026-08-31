@@ -573,17 +573,22 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
         # Isotropic case (default)
         k_intrinsic = soil.intrinsic_permeability  # [m²]
         
-        if k_intrinsic > 0.0
-            soil.water.K_sat = (k_intrinsic * rho_w * g) / mu_w  # [m/s]
-        else
-            # Default fallback for zero or missing intrinsic permeability
-            soil.water.K_sat = 1.0e-7
-        end
-        
         # Anisotropic case: compute directional K_sat values
         k_intrinsic_x = soil.intrinsic_permeability_x  # [m²]
         k_intrinsic_y = soil.intrinsic_permeability_y  # [m²]
-        
+
+        if k_intrinsic > 0.0
+            soil.water.K_sat = (k_intrinsic * rho_w * g) / mu_w  # [m/s]
+        elseif k_intrinsic_x > 0.0 && k_intrinsic_y > 0.0
+            K_sat_x = (k_intrinsic_x * rho_w * g) / mu_w
+            K_sat_y = (k_intrinsic_y * rho_w * g) / mu_w
+            soil.water.K_sat = sqrt(K_sat_x * K_sat_y)
+            @warn "Soil '$soil_name' has zero isotropic intrinsic permeability; " *
+                  "using geometric mean of K_sat_x and K_sat_y for K_sat."
+        else
+            soil.water.K_sat = 0.0
+        end
+
         if k_intrinsic_x > 0.0
             soil.water.K_sat_x = (k_intrinsic_x * rho_w * g) / mu_w  # [m/s]
         else
@@ -594,6 +599,16 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
             soil.water.K_sat_y = (k_intrinsic_y * rho_w * g) / mu_w  # [m/s]
         else
             soil.water.K_sat_y = soil.water.K_sat  # Use isotropic value as fallback
+        end
+
+        if soil.water.swrc_model != "None" && soil.water.K_sat <= 0.0
+            error("""
+            K_sat = 0 for soil '$soil_name'.
+            K_sat is computed as k·ρ_w·g/μ_w with g = [gravity] gravity_magnitude = $g.
+            To run without gravity, keep gravity_magnitude at its physical value (e.g. 9.81)
+            and set gravity_x_component = gravity_y_component = 0.0 — the magnitude is a
+            unit-conversion constant for K_sat and P_water, not an on/off switch.
+            """)
         end
         
         # CRITICAL: Create SWRC model instance with the newly-computed K_sat
@@ -612,10 +627,8 @@ function compute_K_sat_runtime!(materials::MaterialData, calc_params::Dict)
                 elseif soil.water.swrc_model == "Cavalcante"
                     swrc_params["delta"] = soil.water.swrc_cav_delta
                 elseif soil.water.swrc_model == "ConstantSoil"
-                    # ConstantSoil uses K_sat directly and CONSTANT_SOIL_H_MIN from swrc_models
-                    # FOR VERIFICATION PURPOSES ONLY - allows testing Richards solver with constant K model
-                    swrc_params["K_val"] = soil.water.K_sat
-                    swrc_params["h_min"] = CONSTANT_SOIL_H_MIN  # Use constant from swrc_models module
+                    swrc_params["K_val"] = soil.water.K_val > 0.0 ? soil.water.K_val : soil.water.K_sat
+                    swrc_params["h_min"] = soil.water.h_min < 0.0 ? soil.water.h_min : CONSTANT_SOIL_H_MIN
                 end
                 
                 # Create SWRC model struct instance with updated K_sat (option: add directional K_s_x, K_s_y)
