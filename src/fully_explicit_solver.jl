@@ -135,8 +135,8 @@ function assemble_element_stiffness_matrices(mesh::MeshData)::Vector{Matrix{Floa
             detJ = ShapeFunctions.get_detJ(e, p)
             
             # Transform derivatives to physical coordinates
-            # dN/dx = B · J^-1
-            dN_dx = B * invJ  # [4 nodes, 2 coords]
+            # See shape_functions.jl for the inverse-Jacobian index derivation.
+            dN_dx = B * transpose(invJ)  # [4 nodes, 2 coords]
             
             # Gauss weight
             w = ShapeFunctions.shape_funcs.gauss_weights[p]
@@ -379,8 +379,8 @@ function fully_explicit_diffusion_solver(mesh::MeshData, materials::MaterialData
                         Wp= ShapeFunctions.shape_funcs.gauss_weights[p]
                         
                         # Transform derivatives to physical coordinates
-                        # dN/dx = B · J^-1
-                        dN_dx = B * invJ  # [4 nodes, 2 coords]
+                        # See shape_functions.jl for the inverse-Jacobian index derivation.
+                        dN_dx = B * transpose(invJ)  # [4 nodes, 2 coords]
 
                         #Update diffusion flow vector ∑_p K^p * T^p *C^p * k^p_elm *C_tot * det(J) * W_p / μ_g^p 
                         q_aux += (GAS_CONSTANT_R * k_intrinsic * C_gp * T_gp * detJ * Wp / μ_g) .* (dN_dx * dN_dx') * C_t
@@ -419,8 +419,8 @@ function fully_explicit_diffusion_solver(mesh::MeshData, materials::MaterialData
                         Wp= ShapeFunctions.shape_funcs.gauss_weights[p]
                         
                         # Transform derivatives to physical coordinates
-                        # dN/dx = B · J^-1
-                        dN_dx = B * invJ  # [4 nodes, 2 coords]
+                        # See shape_functions.jl for the inverse-Jacobian index derivation.
+                        dN_dx = B * transpose(invJ)  # [4 nodes, 2 coords]
 
                         #get nodal densities
                         ρ_g = zeros(4)
@@ -596,7 +596,8 @@ function fully_explicit_diffusion_solver(mesh::MeshData, materials::MaterialData
                 w = ShapeFunctions.shape_funcs.gauss_weights[p]
 
                 # Transform derivatives to physical coordinates
-                dN_dx = B * invJ  # [4 nodes, 2 coords]
+                # See shape_functions.jl for the inverse-Jacobian index derivation.
+                dN_dx = B * transpose(invJ)  # [4 nodes, 2 coords]
 
                 #Evaluate pressure gradient at Gauss point
                 grad_P = dN_dx' * P_e  # [2 coords]

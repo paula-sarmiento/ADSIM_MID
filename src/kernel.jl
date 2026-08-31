@@ -146,17 +146,17 @@ function main()
         log_print("Version: $(get_version())")
         log_print("="^64)
 
-        # Step 1: Read mesh data
-        log_print("\n[1/8] Reading mesh file: $(mesh_file)")
-        mesh = read_mesh_file(mesh_file)
-        log_print("   ✓ Loaded $(mesh.num_nodes) nodes and $(mesh.num_elements) elements")
-        log_print("   ✓ Loaded initial and boundary conditions")
-
-        # Step 2: Read Material properties
-        log_print("\n[2/8] Reading material properties file: $(mat_file)")
+        # Step 1: Load materials FIRST (needed for mesh IC/BC normalization)
+        log_print("\n[1/8] Reading material properties file: $(mat_file)")
         materials = read_materials_file(mat_file)
         log_print("   ✓ Loaded $(length(materials.gas_dictionary)) gases")
         log_print("   ✓ Loaded $(length(materials.soil_dictionary)) soils")
+
+        # Step 2: Read mesh data WITH materials (enables IC/BC normalization)
+        log_print("\n[2/8] Reading mesh file: $(mesh_file)")
+        mesh = read_mesh_file(mesh_file, materials)
+        log_print("   ✓ Loaded $(mesh.num_nodes) nodes and $(mesh.num_elements) elements")
+        log_print("   ✓ Loaded initial and boundary conditions")
 
         # Step 3: Read calculation parameters
         log_print("\n[3/8] Reading calculation parameters file: $(calc_file)")
@@ -166,6 +166,13 @@ function main()
 
         # Step 3.1: Compute K_sat for soils with water flow (depends on gravity)
         compute_K_sat_runtime!(materials, calc_params)
+
+        # Step 3.2: Normalize water conditions (now that SWRC models are initialized)
+        # Converts ICs (h → θ) and BCs (θ → h) using initialized SWRC models
+        if materials !== nothing
+            normalize_water_conditions!(mesh, materials)
+            log_print("   ✓ Water conditions normalized (ICs/BCs converted using SWRC models)")
+        end
 
         # Step 3.5: Validate reaction kinetics requirements
         if calc_params["solver_settings"]["reaction_kinetics"] == 1
