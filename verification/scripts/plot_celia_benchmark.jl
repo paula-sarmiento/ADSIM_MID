@@ -540,7 +540,7 @@ println("="^70)
 
 # Get project root (script now lives in verification/scripts)
 project_root = normpath(joinpath(@__DIR__, "..", ".."))
-output_base = joinpath(project_root, "output")
+output_base = joinpath(project_root, "verification", "output")
 figures_dir = joinpath(project_root, "verification", "plots")
 mkpath(figures_dir)
 

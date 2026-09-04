@@ -181,7 +181,7 @@ function main()
     verification_root = joinpath(PROJECT_ROOT, "verification")
     output_dir   = joinpath(verification_root, "output")
     
-    base_mesh_case = "CeliaCol_fine"
+    base_mesh_case = "CeliaCol"
     base_material_case = "CeliaCol"
     base_calc_case = "CeliaCol"
     

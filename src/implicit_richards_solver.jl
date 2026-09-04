@@ -208,23 +208,8 @@ function build_richards_sparsity(mesh)
                   mesh.num_nodes, mesh.num_nodes)
 end
 
-function build_boundary_edge_ownership(mesh)
-    edge_ownership = Dict{Tuple{Int,Int},Tuple{Int,Int,Int,Int}}()
-    for element in 1:mesh.num_elements
-        for (a, b) in ((1,2), (2,3), (3,4), (4,1))
-            ni = mesh.elements[element, a]
-            nj = mesh.elements[element, b]
-            key = (min(ni, nj), max(ni, nj))
-            if haskey(edge_ownership, key)
-                count, owner_i, owner_j, owner_element = edge_ownership[key]
-                edge_ownership[key] = (count + 1, owner_i, owner_j, owner_element)
-            else
-                edge_ownership[key] = (1, ni, nj, element)
-            end
-        end
-    end
-    return edge_ownership
-end
+# build_boundary_edge_ownership and group_boundary_bc_patches are pure mesh topology
+# and live in read_mesh.jl, which kernel.jl includes before this file.
 
 """
     build_water_neumann_edges(mesh) -> Vector{Tuple{Int,Int}}
@@ -544,16 +529,28 @@ function picard_richards!(
     ω          :: Float64 = 1.0,
     reaction_out :: Union{Nothing,Vector{Float64}} = nothing,
     c_floor    :: Float64 = CAPACITY_FLOOR_DEFAULT,
-    floor_bound_nodes :: Union{Nothing,BitVector} = nothing
+    floor_bound_nodes :: Union{Nothing,BitVector} = nothing,
+    seepage_active :: Union{Nothing,BitVector} = nothing
 )
     N = mesh.num_nodes
     R = zeros(Float64, N)
-    
+
     # ── Store initial Dirichlet BC values from mesh ──────────────────────────
     # Nodes where pressure_head_bc dictionary has entries are Dirichlet BCs
     dbc_nodes = collect(keys(mesh.pressure_head_bc))
     dbc_vals  = [mesh.pressure_head_bc[i] for i in dbc_nodes]
-    
+
+    # ── Potential seepage face ───────────────────────────────────────────────
+    # The wet extent of the face is unknown in advance, so the constrained set is
+    # revised between iterations by resolve_seepage_face!. When no candidates are
+    # supplied this whole path is inert and the loop below is the original one.
+    seepage_nodes = seepage_active === nothing ? Int[] : collect(mesh.seepage_face_bc)
+    seepage_on = !isempty(seepage_nodes)
+    seepage_flips = seepage_on ? zeros(Int, N) : Int[]
+    seepage_reaction = seepage_on ?
+                       (reaction_out === nothing ? zeros(Float64, N) : reaction_out) :
+                       Float64[]
+
     res_history = Float64[]
 
     # Cold-start enforcement is necessary because h_prev may still contain the
@@ -563,15 +560,20 @@ function picard_richards!(
         h_curr[i] = val
     end
 
+    # The release test reads reactions, so they must be assembled whenever a seepage
+    # face is present even if the caller did not ask for them.
+    assembly_reaction = seepage_on ? seepage_reaction : reaction_out
+
     for m in 1:max_iter
         # Step 1: Assemble nonlinear system (A and R depend on current h)
         assemble_richards!(A, R, h_curr, h_prev, mesh, elem_props, Δt, e_g, cache,
-                   q_boundary_water, free_drainage_edges; reaction_out=reaction_out, c_floor=c_floor,
+                   q_boundary_water, free_drainage_edges; reaction_out=assembly_reaction, c_floor=c_floor,
                            floor_bound_nodes=floor_bound_nodes)
 
         # Step 2: Solve for pressure head increments
         delta = A \ R
         delta_norm = maximum(abs.(delta))
+        # Discharging seepage nodes are constrained too, so they belong in this check.
         max_dbc_delta = isempty(dbc_nodes) ? 0.0 : maximum(abs(delta[i]) for i in dbc_nodes)
         if max_dbc_delta > 1e-10
             @warn "Non-zero Picard increment at Dirichlet nodes: max|δ| = $max_dbc_delta. " *
@@ -580,18 +582,36 @@ function picard_richards!(
         end
         push!(res_history, delta_norm)
 
-        # Step 3: Check convergence
-        if delta_norm < tol
+        # Step 3: Check convergence. Without a seepage face this returns before the
+        # update, exactly as it always has, so results for every existing case are
+        # unchanged. With one, the partition must also be settled, so the test moves
+        # below the update where the revised partition can be judged.
+        if delta_norm < tol && !seepage_on
             return m, res_history
         end
 
         # Step 4: Update pressure head
         h_curr .+= ω .* delta
-        
+
         # Identity rows make δ_i zero at constrained nodes; this only absorbs
         # round-off from the sparse solve.
         for (i, val) in zip(dbc_nodes, dbc_vals)
             h_curr[i] = val
+        end
+
+        # Step 5: Revise the seepage-face partition, then test convergence. A small
+        # increment computed on a partition that is still moving is not a converged
+        # solution, so both must settle in the same iteration.
+        if seepage_on
+            for node in seepage_nodes
+                seepage_active[node] && (h_curr[node] = 0.0)
+            end
+            switched = resolve_seepage_face!(seepage_active, h_curr, seepage_reaction,
+                                             seepage_nodes, seepage_flips,
+                                             SEEPAGE_MAX_FLIPS)
+            if delta_norm < tol && switched == 0
+                return m, res_history
+            end
         end
     end
 
@@ -721,6 +741,13 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
     free_drainage_edges = build_free_drainage_edges(mesh)
     log_print("   ✓ Explicit free-drainage edges: $(length(free_drainage_edges))")
 
+    # ── Potential seepage face ────────────────────────────────────────
+    # nothing when the mesh declares no candidates, which leaves the Picard loop on
+    # its original path. Logged either way: a mesh whose only outlet is a seepage face
+    # would otherwise solve to a silent no-flow state if this were skipped.
+    seepage_active = isempty(mesh.seepage_face_bc) ? nothing : init_seepage_face!(mesh)
+    log_print("   ✓ Potential seepage-face candidates: $(length(mesh.seepage_face_bc))")
+
 
     # ── Time tracking ─────────────────────────────────────────────────
     if initial_state !== nothing
@@ -779,7 +806,8 @@ function implicit_richards_solver(mesh, materials, calc_params, time_data,
                                    tol=picard_tol, max_iter=picard_max_iter,
                                    ω=picard_relaxation, reaction_out=reaction,
                                    c_floor=capacity_floor,
-                                   floor_bound_nodes=floor_bound_nodes)
+                                   floor_bound_nodes=floor_bound_nodes,
+                                   seepage_active=seepage_active)
 
         # ── Accept step ───────────────────────────────────────────────
         h .= h_new

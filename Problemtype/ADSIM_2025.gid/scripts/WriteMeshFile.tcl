@@ -46,7 +46,10 @@ proc ADSIM::WriteMeshFile { filename } {
 
     # Write free-drainage boundary conditions
     ADSIM::WriteMeshFreeDrainageBC $root
-    
+
+    # Write potential seepage-face boundary conditions
+    ADSIM::WriteMeshSeepageFaceBC $root
+
     # Write transient liquid discharge boundary conditions
     ADSIM::WriteMeshTransientDischargeBC $root
     
@@ -323,6 +326,30 @@ proc ADSIM::WriteMeshDischargeVelocityBC { root } {
     GiD_WriteCalculationFile puts $counter
     GiD_WriteCalculationFile nodes $formats
     GiD_WriteCalculationFile puts "end liquid_discharge_bc"
+    GiD_WriteCalculationFile puts ""
+}
+
+#===============================================================================
+# Write potential seepage-face boundary conditions
+#
+# Emits only the candidate node list. Which of those nodes actually discharges is
+# resolved by the Richards solver during the solve, so there is no value to write.
+#===============================================================================
+proc ADSIM::WriteMeshSeepageFaceBC { root } {
+    GiD_WriteCalculationFile puts "seepage_face_bc"
+
+    set ov_type "line"
+    set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Seepage_face"]/group[@ov=%s]} $ov_type]
+    set formats ""
+
+    foreach gNode [$root selectNodes $xp] {
+        dict set formats [$gNode @n] "%d\n"
+    }
+
+    set counter [GiD_WriteCalculationFile nodes -count $formats]
+    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile nodes $formats
+    GiD_WriteCalculationFile puts "end seepage_face_bc"
     GiD_WriteCalculationFile puts ""
 }
 

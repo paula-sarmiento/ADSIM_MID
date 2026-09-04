@@ -768,6 +768,106 @@ end
 
 
 """
+    SEEPAGE_MAX_FLIPS
+
+Switch budget per node per time step for the potential seepage face. A node that has
+changed state this many times is frozen for the remainder of the step; see
+`resolve_seepage_face!`.
+"""
+const SEEPAGE_MAX_FLIPS = 10
+
+
+"""
+    init_seepage_face!(mesh) -> BitVector
+
+Initialise the seepage-face partition with every candidate node dry.
+
+Candidates start unsaturated and are opened by `resolve_seepage_face!` as the solution
+requires. Starting closed is the conservative choice: a node that should be
+discharging is opened on the first iteration that pushes its pressure head positive,
+whereas starting open would inject water at nodes that are genuinely dry.
+
+Throws if a candidate also carries a prescribed head, because the two conditions would
+contend for the same node.
+"""
+function init_seepage_face!(mesh)
+    for node in mesh.seepage_face_bc
+        haskey(mesh.pressure_head_bc, node) &&
+            error("node $node is both a seepage-face candidate and a prescribed-head node")
+        haskey(mesh.volumetric_content_bc, node) &&
+            error("node $node is both a seepage-face candidate and a volumetric-content node")
+    end
+    return falses(mesh.num_nodes)
+end
+
+
+"""
+    resolve_seepage_face!(active, h_new, reaction, candidates, flips, max_flips) -> Int
+
+Update the potential-seepage-face partition and return how many nodes switched state.
+
+A seepage face is a boundary whose wet extent is part of the solution rather than an
+input. Each candidate node is held in one of two states, chosen so that the two
+physical conditions of a face open to the atmosphere — `h <= 0` everywhere, and no
+inflow anywhere — both end up satisfied:
+
+  * **discharging**: constrained to `h = 0`, water free to leave. If its reaction shows
+    flow *entering* the domain, the face would be sucking water out of the air, so the
+    node is released to zero flux.
+  * **unsaturated**: left to the natural zero-flux condition. If the solve pushes its
+    pressure head above zero, the node cannot stay dry, so it begins discharging.
+
+Switching mutates the global `P_boundary_water` mask that the Richards assembly reads,
+so the next assembly sees the revised partition. Iterating to a fixed point is what
+locates the exit point of the free surface.
+
+`flips` counts state changes within the current time step. A node that reaches
+`max_flips` is frozen in its present state, which prevents the partition oscillating
+between two configurations that each appear wrong from the other. The caller is
+expected to report freezing rather than treat it as convergence.
+
+# Arguments
+- `active::BitVector`: Per-node discharging flag, mutated in place
+- `h_new::Vector{Float64}`: Current pressure head, mutated at nodes that start discharging
+- `reaction::Vector{Float64}`: Reactions from the most recent assembly. Physical inward
+  flow at node `i` is `-reaction[i]`, and is only meaningful where the node was masked
+  as Dirichlet, which is exactly the discharging set.
+- `candidates`: Node ids forming the potential seepage face
+- `flips::Vector{Int}`: Per-node switch counter for this time step, mutated in place
+- `max_flips::Int`: Switch budget per node before freezing
+
+# Returns
+- `Int`: Number of nodes whose state changed. Zero means the partition is consistent.
+"""
+function resolve_seepage_face!(active::BitVector, h_new::Vector{Float64},
+                               reaction::Vector{Float64}, candidates,
+                               flips::Vector{Int}, max_flips::Int)::Int
+    global P_boundary_water
+    switched = 0
+
+    for node in candidates
+        flips[node] >= max_flips && continue
+
+        if active[node]
+            -reaction[node] > 0.0 || continue      # still discharging, leave it
+            active[node] = false
+            P_boundary_water[node] = 1             # release to natural zero flux
+        else
+            h_new[node] > 0.0 || continue          # still dry, leave it
+            active[node] = true
+            P_boundary_water[node] = 0             # hold at atmospheric pressure
+            h_new[node] = 0.0
+        end
+
+        flips[node] += 1
+        switched += 1
+    end
+
+    return switched
+end
+
+
+"""
     enforce_water_flux_bc!(mesh)
 
 Enforce water flux (Neumann) BCs during time-stepping.

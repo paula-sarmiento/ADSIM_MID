@@ -20,6 +20,9 @@ Structure to store all mesh data and associated boundary/initial conditions.
 - `partial_pressure_bc::Dict{Int, Vector{Float64}}`: Partial pressure BC (node_id => [P_gas1, P_gas2, ...])
 - `liquid_discharge_bc::Dict{Int, Float64}`: Liquid discharge velocity BC (node_id => discharge_velocity [m/s])
 - `free_drainage_bc::Set{Int}`: Nodes belonging to explicit free-drainage boundary edges
+- `seepage_face_bc::Set{Int}`: Candidate nodes on a potential seepage face. Each is
+  resolved during the solve to either zero pressure head (discharging) or zero flux
+  (unsaturated); see `resolve_seepage_face!` in implicit_richards_solver.jl
 - `transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}`: Transient liquid discharge (node_id => [(time, velocity), ...])
 - `volumetric_content_bc::Dict{Int, Float64}`: Volumetric content BC (node_id => volumetric_content [-])
 - `pressure_head_bc::Dict{Int, Float64}`: Pressure head BC (node_id => pressure_head [m])
@@ -41,6 +44,7 @@ mutable struct MeshData
     partial_pressure_bc::Dict{Int, Vector{Float64}}
     liquid_discharge_bc::Dict{Int, Float64}
     free_drainage_bc::Set{Int}
+    seepage_face_bc::Set{Int}
     transient_liquid_discharge_bc::Dict{Int, Vector{Tuple{Float64, Float64}}}
     volumetric_content_bc::Dict{Int, Float64}
     pressure_head_bc::Dict{Int, Float64}
@@ -60,6 +64,7 @@ mutable struct MeshData
             Dict{Int, Float64}(),
             Dict{Int, Vector{Float64}}(),
             Dict{Int, Float64}(),
+            Set{Int}(),
             Set{Int}(),
             Dict{Int, Vector{Tuple{Float64, Float64}}}(),
             Dict{Int, Float64}(),
@@ -171,6 +176,8 @@ function read_mesh_file(filename::String, materials = nothing)
             # Parse explicit free-drainage boundary nodes
             elseif line == "free_drainage_bc"
                 line_idx = parse_free_drainage_bc!(mesh, lines, line_idx + 1)
+            elseif line == "seepage_face_bc"
+                line_idx = parse_seepage_face_bc!(mesh, lines, line_idx + 1)
                 
             # Parse transient liquid discharge boundary conditions
             elseif line == "transient_liquid_discharge_bc"
@@ -694,6 +701,44 @@ function parse_free_drainage_bc!(mesh::MeshData, lines::Vector{String}, line_idx
     end
 
     if strip(lines[line_idx]) == "end free_drainage_bc"
+        line_idx += 1
+    end
+
+    return line_idx
+end
+
+
+"""
+parse_seepage_face_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int) -> Int
+
+Parse the potential seepage face node list from the mesh file.
+
+Format: a count line followed by one node id per line. These nodes are only
+*candidates*: whether each one discharges at zero pressure head or carries zero flux
+is part of the solution, resolved iteratively by the Richards solver.
+
+The block is optional. A mesh without it yields an empty set and the solver's
+seepage-face path is skipped entirely.
+
+# Arguments
+- `mesh::MeshData`: Mesh data structure to populate
+- `lines::Vector{String}`: All lines from the file
+- `line_idx::Int`: Current line index
+
+# Returns
+- `Int`: Next line index to process
+"""
+function parse_seepage_face_bc!(mesh::MeshData, lines::Vector{String}, line_idx::Int)
+    counter = parse(Int, strip(lines[line_idx]))
+    line_idx += 1
+
+    for _ in 1:counter
+        node_id = parse(Int, strip(lines[line_idx]))
+        push!(mesh.seepage_face_bc, node_id)
+        line_idx += 1
+    end
+
+    if strip(lines[line_idx]) == "end seepage_face_bc"
         line_idx += 1
     end
 
@@ -1312,6 +1357,106 @@ function get_boundary_node_influences(mesh::MeshData)
 end
 
 
+"""
+    build_boundary_edge_ownership(mesh) -> Dict{Tuple{Int,Int}, Tuple{Int,Int,Int,Int}}
+
+Map every element edge to `(count, node_i, node_j, owner_element)`, where `count` is
+the number of elements sharing that edge. An edge lies on the geometric boundary iff
+`count == 1`.
+
+The key is the node pair sorted ascending; `node_i`/`node_j` preserve the traversal
+order of the first element that claimed the edge, which is what
+`calculate_edge_outward_normal` needs to orient the normal outward.
+
+Pure mesh topology — independent of any boundary condition or physics.
+"""
+function build_boundary_edge_ownership(mesh)
+    edge_ownership = Dict{Tuple{Int,Int},Tuple{Int,Int,Int,Int}}()
+    for element in 1:mesh.num_elements
+        for (a, b) in ((1,2), (2,3), (3,4), (4,1))
+            ni = mesh.elements[element, a]
+            nj = mesh.elements[element, b]
+            key = (min(ni, nj), max(ni, nj))
+            if haskey(edge_ownership, key)
+                count, owner_i, owner_j, owner_element = edge_ownership[key]
+                edge_ownership[key] = (count + 1, owner_i, owner_j, owner_element)
+            else
+                edge_ownership[key] = (1, ni, nj, element)
+            end
+        end
+    end
+    return edge_ownership
+end
+
+"""
+    group_boundary_bc_patches(mesh, bc_nodes) -> Vector{Vector{Int}}
+
+Group a set of boundary-condition nodes into connected patches along the geometric
+boundary.
+
+Two nodes belong to the same patch when a boundary edge joins them and both carry the
+condition. Walking the outer boundary, a condition applied to several disjoint stretches
+therefore yields one patch per stretch, which is what lets a caller account for each
+stretch separately (inflow face versus drain, one screened interval versus another)
+without hard-coding node numbers that only hold for one mesh.
+
+# Arguments
+- `mesh`: Mesh data structure
+- `bc_nodes`: Any iterable of node ids, typically `keys(mesh.pressure_head_bc)` or the
+  keys of another boundary-condition dictionary
+
+# Returns
+- `Vector{Vector{Int}}`: One sorted node list per patch, ordered by smallest node id.
+  Nodes carrying the condition but touching no qualifying boundary edge (an isolated
+  prescribed node) come back as their own single-node patch.
+
+# Notes
+- Makes no assumption about how many patches exist, nor about what they mean; naming
+  them is the caller's job.
+- Independent of the condition's physical type, so it applies equally to prescribed
+  head, discharge, or concentration nodes.
+
+# Example
+```julia
+patches = group_boundary_bc_patches(mesh, keys(mesh.pressure_head_bc))
+# patches[i] is one connected stretch of prescribed-head boundary
+```
+"""
+function group_boundary_bc_patches(mesh, bc_nodes)
+    prescribed = Set{Int}(bc_nodes)
+    neighbours = Dict{Int,Vector{Int}}(node => Int[] for node in prescribed)
+
+    for (_, ownership) in build_boundary_edge_ownership(mesh)
+        count, ni, nj, _ = ownership
+        count == 1 || continue                       # interior edge
+        (ni in prescribed && nj in prescribed) || continue
+        push!(neighbours[ni], nj)
+        push!(neighbours[nj], ni)
+    end
+
+    patches = Vector{Int}[]
+    unvisited = copy(prescribed)
+    while !isempty(unvisited)
+        seed = minimum(unvisited)
+        delete!(unvisited, seed)
+        patch = Int[]
+        stack = [seed]
+        while !isempty(stack)
+            node = pop!(stack)
+            push!(patch, node)
+            for neighbour in neighbours[node]
+                if neighbour in unvisited
+                    delete!(unvisited, neighbour)
+                    push!(stack, neighbour)
+                end
+            end
+        end
+        push!(patches, sort(patch))
+    end
+
+    return sort(patches, by=first)
+end
+
 #------------------------------------------------------------------------------
 # EXPORTS
 #------------------------------------------------------------------------------
@@ -1321,3 +1466,4 @@ export MeshData, read_mesh_file, get_element_nodes, get_node_coordinates
 export get_element_material, get_node_elements, has_pressure_bc
 export calculate_edge_outward_normal, BoundaryNodeInfluence, get_boundary_node_influences
 export identify_boundary_edges, normalize_water_conditions!
+export build_boundary_edge_ownership, group_boundary_bc_patches
