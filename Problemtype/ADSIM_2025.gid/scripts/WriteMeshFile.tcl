@@ -664,12 +664,52 @@ proc ADSIM::WriteMeshPressureHeadBC { root } {
         dict set formats [$gNode @n] "%d $v1\n"
     }
 
-    # Add a counter 
+    # Total head groups are converted to pressure head here, node by node, because
+    # ADSIM's mesh format carries only pressure head. H is one constant over a
+    # submerged face while h = H - y varies with elevation, so the conversion needs
+    # each node's y and cannot go through the format-string mechanism above.
+    set total_head_values [ADSIM::CollectTotalHeadAsPressureHead $root]
+
+    # Add a counter
     set counter [GiD_WriteCalculationFile nodes -count $formats]
-    GiD_WriteCalculationFile puts $counter
+    GiD_WriteCalculationFile puts [expr {$counter + [dict size $total_head_values]}]
     GiD_WriteCalculationFile nodes $formats
+    foreach node_id [lsort -integer [dict keys $total_head_values]] {
+        GiD_WriteCalculationFile puts "$node_id [dict get $total_head_values $node_id]"
+    }
     GiD_WriteCalculationFile puts "end pressure_head_bc"
     GiD_WriteCalculationFile puts ""
+}
+
+#===============================================================================
+# Convert Total head conditions to pressure head, per node
+#
+# Returns a dict node_id -> h, where h = H - y. Kept separate from the pressure
+# head writer so that writer's existing path is untouched: a mesh with no Total
+# head groups produces exactly the same file as before.
+#===============================================================================
+proc ADSIM::CollectTotalHeadAsPressureHead { root } {
+    set values [dict create]
+
+    # Elevation of every mesh node, from the same source the coordinate block uses.
+    set elevation [dict create]
+    foreach node_record [GiD_Info Mesh nodes -sublist] {
+        dict set elevation [lindex $node_record 0] [lindex $node_record 2]
+    }
+
+    foreach ov_type {point line} {
+        set xp [format_xpath {container[@n="BC"]/container[@n="Liquid_BCs"]/condition[@n="Total_Head"]/group[@ov=%s]} $ov_type]
+        foreach gNode [$root selectNodes $xp] {
+            set total_head [$gNode selectNodes {string(value[@n="total_head"]/@v)}]
+            foreach node_id [GiD_EntitiesGroups get [$gNode @n] nodes] {
+                if { ![dict exists $elevation $node_id] } { continue }
+                dict set values $node_id \
+                    [expr {double($total_head) - double([dict get $elevation $node_id])}]
+            }
+        }
+    }
+
+    return $values
 }
 
 #===============================================================================
